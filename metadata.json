@@ -1,0 +1,6 @@
+{
+  "name": "HexaSend - P2P WebRTC Secure File Transfer",
+  "description": "Blazing-fast, end-to-end encrypted peer-to-peer file and data sharing directly between devices using WebRTC.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
