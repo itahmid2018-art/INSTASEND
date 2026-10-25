@@ -38,6 +38,7 @@ import { WebRTCManager } from '../services/webrtc.ts';
 import { extractFilesAndFoldersFromDataTransfer } from '../services/folderDrop.ts';
 import { QRCodeModal } from './QRCodeModal.tsx';
 import { isCompressibleTextFile } from '../services/compression.ts';
+import { SpeedChart } from './SpeedChart.tsx';
 
 interface SendTabProps {
   webrtc: WebRTCManager | null;
@@ -720,56 +721,68 @@ export const SendTab: React.FC<SendTabProps> = ({
 
       {/* SENDER'S SYSTEM: Live Upload Speed & Progress Card */}
       {(state === 'transferring' || state === 'completed') && metrics && (
-        <div className="p-6 rounded-3xl bg-white border border-[#dadce0] google-card-shadow space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h4 className="text-sm font-bold text-[#202124] flex items-center gap-2">
-                {state === 'completed' ? (
-                  <>
-                    <CheckCircle2 className="w-4 h-4 text-[#34A853]" />
-                    <span>Upload Complete!</span>
-                  </>
-                ) : (
-                  <>
-                    <ArrowUp className="w-4 h-4 text-[#1a73e8] animate-bounce" />
-                    <span>Sending Files via WebRTC</span>
-                  </>
-                )}
-              </h4>
-              <p className="text-xs text-[#5f6368] mt-0.5">
-                {formatBytes(metrics.bytesTransferred)} of {formatBytes(metrics.totalBytes)} ({metrics.percent}%)
-              </p>
-            </div>
-
-            {/* Upload Speed Display on Sender's System */}
-            <div className="text-right">
-              <div className="flex items-center justify-end gap-1 text-xs text-[#5f6368]">
-                <span className="w-2 h-2 rounded-full bg-[#1a73e8] animate-ping" />
-                <span>Upload Speed</span>
+        <div className="space-y-4">
+          <div className="p-6 rounded-3xl bg-white border border-[#dadce0] google-card-shadow space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-[#202124] flex items-center gap-2">
+                  {state === 'completed' ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-[#34A853]" />
+                      <span>Upload Complete!</span>
+                    </>
+                  ) : (
+                    <>
+                      <ArrowUp className="w-4 h-4 text-[#1a73e8] animate-bounce" />
+                      <span>Sending Files via WebRTC</span>
+                    </>
+                  )}
+                </h4>
+                <p className="text-xs text-[#5f6368] mt-0.5">
+                  {formatBytes(metrics.bytesTransferred)} of {formatBytes(metrics.totalBytes)} ({metrics.percent}%)
+                </p>
               </div>
-              <span className="text-lg font-mono font-bold text-[#1a73e8]">
-                {state === 'completed' ? 'Done' : metrics.formattedSpeed}
+
+              {/* Upload Speed Display on Sender's System */}
+              <div className="text-right">
+                <div className="flex items-center justify-end gap-1 text-xs text-[#5f6368]">
+                  <span className="w-2 h-2 rounded-full bg-[#1a73e8] animate-ping" />
+                  <span>Upload Speed</span>
+                </div>
+                <span className="text-lg font-mono font-bold text-[#1a73e8]">
+                  {state === 'completed' ? 'Done' : metrics.formattedSpeed}
+                </span>
+                {state === 'transferring' && (
+                  <p className="text-[11px] text-[#70757a]">ETA: {formatDuration(metrics.etaSeconds)}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Google Blue Progress Bar */}
+            <div className="w-full bg-[#f1f3f4] rounded-full h-2.5 overflow-hidden">
+              <div
+                className="bg-[#1a73e8] h-full rounded-full transition-all duration-300"
+                style={{ width: `${metrics.percent}%` }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] text-[#5f6368] font-mono">
+              <span>Chunks: {metrics.chunksCompleted} / {metrics.totalChunks} (64KB packets)</span>
+              <span className="flex items-center gap-1 text-[#188038]">
+                <ShieldCheck className="w-3.5 h-3.5" /> DTLS 1.2 Encrypted
               </span>
-              {state === 'transferring' && (
-                <p className="text-[11px] text-[#70757a]">ETA: {formatDuration(metrics.etaSeconds)}</p>
-              )}
             </div>
           </div>
 
-          {/* Google Blue Progress Bar */}
-          <div className="w-full bg-[#f1f3f4] rounded-full h-2.5 overflow-hidden">
-            <div
-              className="bg-[#1a73e8] h-full rounded-full transition-all duration-300"
-              style={{ width: `${metrics.percent}%` }}
-            />
-          </div>
-
-          <div className="flex items-center justify-between text-[11px] text-[#5f6368] font-mono">
-            <span>Chunks: {metrics.chunksCompleted} / {metrics.totalChunks} (64KB packets)</span>
-            <span className="flex items-center gap-1 text-[#188038]">
-              <ShieldCheck className="w-3.5 h-3.5" /> DTLS 1.2 Encrypted
-            </span>
-          </div>
+          {/* Recharts Live Mbps Speed Line Chart */}
+          <SpeedChart
+            speedBytesPerSec={metrics.speedBytesPerSec}
+            bytesTransferred={metrics.bytesTransferred}
+            totalBytes={metrics.totalBytes}
+            isActive={state === 'transferring'}
+            isCompleted={state === 'completed'}
+            speedType="upload"
+          />
         </div>
       )}
 

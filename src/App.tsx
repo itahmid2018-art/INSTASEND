@@ -28,6 +28,7 @@ import { AuthModal } from './components/AuthModal.tsx';
 import { RadarModal } from './components/RadarModal.tsx';
 import { HistoryModal } from './components/HistoryModal.tsx';
 import { SecurityModal } from './components/SecurityModal.tsx';
+import { AdminPortal } from './components/AdminPortal.tsx';
 import { WebRTCManager } from './services/webrtc.ts';
 import { getLocalDeviceInfo, formatBytes } from './services/device.ts';
 import { sound } from './services/sound.ts';
@@ -42,7 +43,7 @@ import {
 } from './types.ts';
 
 export default function App() {
-  const [activeView, setActiveView] = useState<'transfer' | 'files'>('transfer');
+  const [activeView, setActiveView] = useState<'transfer' | 'files' | 'admin'>('transfer');
   const [activeTab, setActiveTab] = useState<'send' | 'receive'>('send');
   const [deviceInfo, setDeviceInfo] = useState<DeviceInfo>(getLocalDeviceInfo());
   const [sessionState, setSessionState] = useState<string>('idle');
@@ -138,9 +139,13 @@ export default function App() {
     }
   };
 
-  // Parse URL query parameter for direct joins: ?code=XYZ123
+  // Parse URL query parameter or path: ?code=XYZ123 or /admin
   const [urlCode, setUrlCode] = useState<string>('');
   useEffect(() => {
+    if (window.location.pathname === '/admin') {
+      setActiveView('admin');
+    }
+
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code') || params.get('join') || '';
     if (code) {
@@ -567,7 +572,7 @@ export default function App() {
               )}
             </div>
           </div>
-        ) : (
+        ) : activeView === 'files' ? (
           /* FILE MANAGER VIEW */
           <FileManager
             files={managedFiles}
@@ -581,6 +586,13 @@ export default function App() {
             metrics={metrics}
             activeRole={webrtcRef.current ? (sessionState === 'transferring' ? (activeTab === 'send' ? 'sender' : 'receiver') : null) : null}
             transferState={sessionState}
+          />
+        ) : (
+          /* ADMIN PORTAL VIEW (/admin) */
+          <AdminPortal
+            currentUser={currentUser}
+            onLogin={handleLogin}
+            onClose={() => setActiveView('transfer')}
           />
         )}
       </main>
@@ -612,6 +624,9 @@ export default function App() {
             </button>
             <button onClick={() => setIsHistoryOpen(true)} className="hover:text-[#202124] transition-colors">
               History
+            </button>
+            <button onClick={() => setActiveView('admin')} className="text-[#1a73e8] hover:underline transition-colors font-medium">
+              Admin Portal (/admin)
             </button>
           </div>
 

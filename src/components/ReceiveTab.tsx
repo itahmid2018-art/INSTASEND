@@ -28,6 +28,7 @@ import { formatBytes, formatDuration } from '../services/device.ts';
 import { sound } from '../services/sound.ts';
 import { WebRTCManager } from '../services/webrtc.ts';
 import { QRCodeModal } from './QRCodeModal.tsx';
+import { SpeedChart } from './SpeedChart.tsx';
 
 interface ReceiveTabProps {
   webrtc: WebRTCManager | null;
@@ -365,46 +366,58 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
 
         {/* RECEIVER'S SYSTEM: Live Download Speed & Metrics */}
         {metrics && (state === 'transferring' || state === 'completed') && (
-          <div className="space-y-3 pt-3 border-t border-[#dadce0]">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-[#202124] font-medium flex items-center gap-1.5">
-                {state === 'completed' ? (
-                  <>
-                    <CheckCircle2 className="w-4 h-4 text-[#34A853]" />
-                    <span>Download complete!</span>
-                  </>
-                ) : (
-                  <>
-                    <ArrowDown className="w-4 h-4 text-[#1a73e8] animate-bounce" />
-                    <span>Receiving data stream...</span>
-                  </>
-                )}
-              </span>
-
-              {/* Download Speed Display on Receiver's System */}
-              <div className="text-right">
-                <div className="flex items-center justify-end gap-1 text-xs text-[#5f6368]">
-                  <span className="w-2 h-2 rounded-full bg-[#34A853] animate-ping" />
-                  <span>Download Speed</span>
-                </div>
-                <span className="font-mono text-[#34A853] font-bold text-sm sm:text-base">
-                  {state === 'transferring' ? metrics.formattedSpeed : `${formatBytes(metrics.totalBytes)} total`}
+          <div className="space-y-4 pt-3 border-t border-[#dadce0]">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-[#202124] font-medium flex items-center gap-1.5">
+                  {state === 'completed' ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-[#34A853]" />
+                      <span>Download complete!</span>
+                    </>
+                  ) : (
+                    <>
+                      <ArrowDown className="w-4 h-4 text-[#1a73e8] animate-bounce" />
+                      <span>Receiving data stream...</span>
+                    </>
+                  )}
                 </span>
+
+                {/* Download Speed Display on Receiver's System */}
+                <div className="text-right">
+                  <div className="flex items-center justify-end gap-1 text-xs text-[#5f6368]">
+                    <span className="w-2 h-2 rounded-full bg-[#34A853] animate-ping" />
+                    <span>Download Speed</span>
+                  </div>
+                  <span className="font-mono text-[#34A853] font-bold text-sm sm:text-base">
+                    {state === 'transferring' ? metrics.formattedSpeed : `${formatBytes(metrics.totalBytes)} total`}
+                  </span>
+                </div>
+              </div>
+
+              {/* Google Green Progress Bar */}
+              <div className="w-full bg-[#f1f3f4] rounded-full h-2.5 overflow-hidden">
+                <div
+                  className="bg-[#34A853] h-full rounded-full transition-all duration-300"
+                  style={{ width: `${metrics.percent}%` }}
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] text-[#5f6368] font-mono">
+                <span>{formatBytes(metrics.bytesTransferred)} / {formatBytes(metrics.totalBytes)} ({metrics.percent}%)</span>
+                {state === 'transferring' && <span>ETA: {formatDuration(metrics.etaSeconds)}</span>}
               </div>
             </div>
 
-            {/* Google Green Progress Bar */}
-            <div className="w-full bg-[#f1f3f4] rounded-full h-2.5 overflow-hidden">
-              <div
-                className="bg-[#34A853] h-full rounded-full transition-all duration-300"
-                style={{ width: `${metrics.percent}%` }}
-              />
-            </div>
-
-            <div className="flex items-center justify-between text-[11px] text-[#5f6368] font-mono">
-              <span>{formatBytes(metrics.bytesTransferred)} / {formatBytes(metrics.totalBytes)} ({metrics.percent}%)</span>
-              {state === 'transferring' && <span>ETA: {formatDuration(metrics.etaSeconds)}</span>}
-            </div>
+            {/* Recharts Live Mbps Speed Line Chart */}
+            <SpeedChart
+              speedBytesPerSec={metrics.speedBytesPerSec}
+              bytesTransferred={metrics.bytesTransferred}
+              totalBytes={metrics.totalBytes}
+              isActive={state === 'transferring'}
+              isCompleted={state === 'completed'}
+              speedType="download"
+            />
           </div>
         )}
       </div>

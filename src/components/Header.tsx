@@ -30,8 +30,8 @@ interface HeaderProps {
   historyCount: number;
   currentUser: UserProfile | null;
   onOpenAuth: () => void;
-  activeView: 'transfer' | 'files';
-  onViewChange: (view: 'transfer' | 'files') => void;
+  activeView: 'transfer' | 'files' | 'admin';
+  onViewChange: (view: 'transfer' | 'files' | 'admin') => void;
   managedFilesCount: number;
 }
 
@@ -128,6 +128,16 @@ export const Header: React.FC<HeaderProps> = ({
                   {managedFilesCount}
                 </span>
               )}
+            </button>
+            <button
+              onClick={() => onViewChange('admin')}
+              className={`px-3 py-1.5 rounded-full text-[13px] font-medium transition-colors ${
+                activeView === 'admin'
+                  ? 'bg-purple-50 text-purple-700 font-semibold border border-purple-200'
+                  : 'text-[#5f6368] hover:text-[#202124] hover:bg-[#f1f3f4]'
+              }`}
+            >
+              /admin
             </button>
           </nav>
         </div>

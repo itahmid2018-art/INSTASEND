@@ -367,6 +367,91 @@ app.post('/api/user/stats', (req, res) => {
   }
 });
 
+// Admin APIs (/admin support)
+app.get('/api/admin/overview', (req, res) => {
+  try {
+    const activePeersList = Array.from(peers.values()).map(p => ({
+      id: p.id,
+      roomCode: p.roomCode || null,
+      role: p.role || null,
+      deviceInfo: p.deviceInfo || { name: 'Unknown Device', browser: 'Browser', os: 'OS', type: 'desktop' }
+    }));
+
+    const activeRoomsList = Array.from(rooms.values()).map(r => ({
+      code: r.code,
+      createdAt: r.createdAt,
+      sender: r.sender ? { id: r.sender.id, deviceInfo: r.sender.deviceInfo } : null,
+      receiver: r.receiver ? { id: r.receiver.id, deviceInfo: r.receiver.deviceInfo } : null,
+      filesCount: r.filesMeta?.length || 0
+    }));
+
+    const memoryUsage = process.memoryUsage();
+
+    res.json({
+      success: true,
+      stats: {
+        activePeersCount: peers.size,
+        activeRoomsCount: rooms.size,
+        activePeers: activePeersList,
+        activeRooms: activeRoomsList,
+        memoryUsage: {
+          rss: `${(memoryUsage.rss / 1024 / 1024).toFixed(2)} MB`,
+          heapTotal: `${(memoryUsage.heapTotal / 1024 / 1024).toFixed(2)} MB`,
+          heapUsed: `${(memoryUsage.heapUsed / 1024 / 1024).toFixed(2)} MB`
+        },
+        uptimeSeconds: Math.floor(process.uptime()),
+        nodeVersion: process.version,
+        sqlite: sqliteAuth.getDbStatus()
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.get('/api/admin/users', (req, res) => {
+  try {
+    const users = sqliteAuth.getAllUsers();
+    res.json({ success: true, users });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/admin/users', (req, res) => {
+  try {
+    const { name, email, password, role, plan } = req.body;
+    const result = sqliteAuth.registerUser(name, email, password, role || 'user', plan || 'free');
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+app.delete('/api/admin/users/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    sqliteAuth.deleteUser(id);
+    res.json({ success: true, message: `User ${id} deleted successfully` });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.get('/api/admin/seed-sql', (req, res) => {
+  try {
+    const sqlPath = path.resolve(__dirname, 'docs/admin_and_test_users.sql');
+    if (fs.existsSync(sqlPath)) {
+      const sqlContent = fs.readFileSync(sqlPath, 'utf-8');
+      res.type('text/plain').send(sqlContent);
+    } else {
+      res.status(404).send('-- SQL seed file not found');
+    }
+  } catch (err: any) {
+    res.status(500).send(`-- Error loading SQL file: ${err.message}`);
+  }
+});
+
 async function startServer() {
   if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');

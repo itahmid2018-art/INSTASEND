@@ -10,6 +10,7 @@ export interface UserProfile {
   name: string;
   email: string;
   avatar?: string;
+  role?: 'admin' | 'user';
   plan: 'free' | 'pro';
   totalUploads: number;
   totalBytesSent: number;

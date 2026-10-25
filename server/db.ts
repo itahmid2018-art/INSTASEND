@@ -17,6 +17,7 @@ export interface UserRow {
   password_hash: string;
   salt: string;
   avatar: string | null;
+  role: 'admin' | 'user';
   plan: 'free' | 'pro';
   total_uploads: number;
   total_bytes_sent: number;
@@ -38,6 +39,7 @@ export interface SanitizedUser {
   name: string;
   email: string;
   avatar?: string;
+  role: 'admin' | 'user';
   plan: 'free' | 'pro';
   totalUploads: number;
   totalBytesSent: number;
@@ -58,6 +60,7 @@ class SQLiteAuthService {
 
     this.db = new DatabaseSync(DB_PATH);
     this.initTables();
+    this.seedAdminUser();
     this.seedDemoUser();
     this.isInitialized = true;
   }
@@ -75,6 +78,7 @@ class SQLiteAuthService {
         password_hash TEXT NOT NULL,
         salt TEXT NOT NULL,
         avatar TEXT,
+        role TEXT DEFAULT 'user',
         plan TEXT DEFAULT 'free',
         total_uploads INTEGER DEFAULT 0,
         total_bytes_sent INTEGER DEFAULT 0,
@@ -94,6 +98,13 @@ class SQLiteAuthService {
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
       CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     `);
+
+    // Migration helper: ensure role column exists if table was created previously without it
+    try {
+      this.db.exec(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user';`);
+    } catch {
+      // Column already exists
+    }
   }
 
   private hashPassword(password: string, salt: string): string {
@@ -113,6 +124,7 @@ class SQLiteAuthService {
       name: user.name,
       email: user.email,
       avatar: user.avatar || `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(user.email)}`,
+      role: user.role || 'user',
       plan: user.plan || 'free',
       totalUploads: user.total_uploads,
       totalBytesSent: user.total_bytes_sent,
@@ -122,22 +134,58 @@ class SQLiteAuthService {
     };
   }
 
+  private seedAdminUser() {
+    const adminEmail = 'admin';
+    const stmt = this.db.prepare('SELECT id FROM users WHERE email = ? OR email = ?');
+    const existing = stmt.get(adminEmail, 'admin@instasend.io');
+
+    if (!existing) {
+      const salt = 'a1b2c3d4e5f67890123456789abcdef0';
+      const hash = this.hashPassword('1@3$5^7*9', salt);
+      const userId = 'usr_admin_system';
+      const now = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+      const insert = this.db.prepare(`
+        INSERT INTO users (
+          id, email, name, password_hash, salt, avatar, role, plan,
+          total_uploads, total_bytes_sent, total_bytes_received, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      insert.run(
+        userId,
+        'admin',
+        'System Administrator',
+        hash,
+        salt,
+        'https://api.dicebear.com/7.x/identicon/svg?seed=Admin',
+        'admin',
+        'pro',
+        142,
+        1024 * 1024 * 5420,
+        1024 * 1024 * 3120,
+        now,
+        Date.now()
+      );
+    }
+  }
+
   private seedDemoUser() {
     const demoEmail = 'alex.rivera@instasend.io';
     const stmt = this.db.prepare('SELECT id FROM users WHERE email = ?');
     const existing = stmt.get(demoEmail);
 
     if (!existing) {
-      const salt = crypto.randomBytes(16).toString('hex');
+      const salt = 'c3d4e5f6a1b27890123456789abcdef2';
       const hash = this.hashPassword('InstaSend2026!', salt);
       const userId = 'usr_alex_rivera_demo';
       const now = Date.now() - 14 * 24 * 60 * 60 * 1000;
 
       const insert = this.db.prepare(`
         INSERT INTO users (
-          id, email, name, password_hash, salt, avatar, plan,
+          id, email, name, password_hash, salt, avatar, role, plan,
           total_uploads, total_bytes_sent, total_bytes_received, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       insert.run(
@@ -147,6 +195,7 @@ class SQLiteAuthService {
         hash,
         salt,
         'https://api.dicebear.com/7.x/identicon/svg?seed=Alex',
+        'user',
         'pro',
         28,
         1024 * 1024 * 840,
@@ -157,7 +206,13 @@ class SQLiteAuthService {
     }
   }
 
-  public registerUser(name: string, email: string, password: string): { user: SanitizedUser; token: string } {
+  public registerUser(
+    name: string,
+    email: string,
+    password: string,
+    role: 'admin' | 'user' = 'user',
+    plan: 'free' | 'pro' = 'free'
+  ): { user: SanitizedUser; token: string } {
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
 
@@ -181,12 +236,12 @@ class SQLiteAuthService {
 
     const insert = this.db.prepare(`
       INSERT INTO users (
-        id, email, name, password_hash, salt, avatar, plan,
+        id, email, name, password_hash, salt, avatar, role, plan,
         total_uploads, total_bytes_sent, total_bytes_received, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    insert.run(id, cleanEmail, cleanName, hash, salt, avatar, 'free', 0, 0, 0, now, now);
+    insert.run(id, cleanEmail, cleanName, hash, salt, avatar, role, plan, 0, 0, 0, now, now);
 
     const userRow: UserRow = {
       id,
@@ -195,7 +250,8 @@ class SQLiteAuthService {
       password_hash: hash,
       salt,
       avatar,
-      plan: 'free',
+      role,
+      plan,
       total_uploads: 0,
       total_bytes_sent: 0,
       total_bytes_received: 0,
@@ -207,18 +263,23 @@ class SQLiteAuthService {
     return { user: this.sanitize(userRow, token), token };
   }
 
-  public loginUser(email: string, password: string, deviceName?: string): { user: SanitizedUser; token: string } {
-    const cleanEmail = email.trim().toLowerCase();
-    const stmt = this.db.prepare('SELECT * FROM users WHERE email = ?');
-    const user = (stmt.get(cleanEmail) as unknown) as UserRow | undefined;
+  public loginUser(emailOrUsername: string, password: string, deviceName?: string): { user: SanitizedUser; token: string } {
+    const input = emailOrUsername.trim().toLowerCase();
+    const stmt = this.db.prepare('SELECT * FROM users WHERE email = ? OR (email = ? AND ? = ?)');
+    
+    // Support login with 'admin' or full email
+    let user = (stmt.get(input, 'admin', input, 'admin') as unknown) as UserRow | undefined;
+    if (!user) {
+      user = (this.db.prepare('SELECT * FROM users WHERE email = ?').get(input) as unknown) as UserRow | undefined;
+    }
 
     if (!user) {
-      throw new Error('No user account found with this email.');
+      throw new Error('No user account found with this username or email.');
     }
 
     const isValid = this.verifyPassword(password, user.salt, user.password_hash);
     if (!isValid) {
-      throw new Error('Invalid email or password.');
+      throw new Error('Invalid username/email or password.');
     }
 
     const token = this.createSession(user.id, deviceName);
@@ -241,7 +302,7 @@ class SQLiteAuthService {
     if (!token) return null;
 
     const sessionStmt = this.db.prepare(`
-      SELECT s.*, u.*
+      SELECT s.token as session_token, s.device_name, u.*
       FROM sessions s
       JOIN users u ON s.user_id = u.id
       WHERE s.token = ?
@@ -286,14 +347,33 @@ class SQLiteAuthService {
     return this.sanitize(updated);
   }
 
+  public getAllUsers(): SanitizedUser[] {
+    const rows = (this.db.prepare('SELECT * FROM users ORDER BY created_at DESC').all() as unknown) as UserRow[];
+    return rows.map(u => this.sanitize(u));
+  }
+
+  public deleteUser(userId: string): boolean {
+    const stmt = this.db.prepare('DELETE FROM users WHERE id = ?');
+    stmt.run(userId);
+    return true;
+  }
+
   public getDbStatus() {
     const userCount = (this.db.prepare('SELECT COUNT(*) as count FROM users').get() as any)?.count || 0;
     const sessionCount = (this.db.prepare('SELECT COUNT(*) as count FROM sessions').get() as any)?.count || 0;
+    let fileSize = 0;
+    try {
+      fileSize = fs.statSync(DB_PATH).size;
+    } catch {
+      fileSize = 0;
+    }
 
     return {
       status: 'operational',
       engine: 'SQLite3 (node:sqlite)',
       databaseFile: DB_PATH,
+      fileSizeBytes: fileSize,
+      fileSizeFormatted: `${(fileSize / 1024).toFixed(1)} KB`,
       isInitialized: this.isInitialized,
       userCount,
       activeSessionCount: sessionCount,
