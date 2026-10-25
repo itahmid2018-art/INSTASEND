@@ -12,11 +12,19 @@ import {
   ExternalLink,
   Info,
   CheckCircle2,
-  AlertTriangle
+  AlertTriangle,
+  FolderArchive,
+  ArrowRightLeft,
+  ArrowUp,
+  ArrowDown,
+  Search,
+  Sparkles
 } from 'lucide-react';
 import { Header } from './components/Header.tsx';
 import { SendTab } from './components/SendTab.tsx';
 import { ReceiveTab } from './components/ReceiveTab.tsx';
+import { FileManager } from './components/FileManager.tsx';
+import { AuthModal } from './components/AuthModal.tsx';
 import { RadarModal } from './components/RadarModal.tsx';
 import { HistoryModal } from './components/HistoryModal.tsx';
 import { SecurityModal } from './components/SecurityModal.tsx';
@@ -28,10 +36,13 @@ import {
   FileItem, 
   TransferMetrics, 
   ChatMessage, 
-  HistoryRecord 
+  HistoryRecord,
+  UserProfile,
+  ManagedFile
 } from './types.ts';
 
 export default function App() {
+  const [activeView, setActiveView] = useState<'transfer' | 'files'>('transfer');
   const [activeTab, setActiveTab] = useState<'send' | 'receive'>('send');
   const [deviceInfo, setDeviceInfo] = useState<DeviceInfo>(getLocalDeviceInfo());
   const [sessionState, setSessionState] = useState<string>('idle');
@@ -43,13 +54,34 @@ export default function App() {
   const [radarPeers, setRadarPeers] = useState<{ id: string; deviceInfo: DeviceInfo }[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // User Profile & Auth
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+    try {
+      const saved = localStorage.getItem('instasend_user') || localStorage.getItem('hexasend_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [isAuthOpen, setIsAuthOpen] = useState(false);
+
+  // Managed Files List
+  const [managedFiles, setManagedFiles] = useState<ManagedFile[]>(() => {
+    try {
+      const saved = localStorage.getItem('instasend_managed_files') || localStorage.getItem('hexasend_managed_files');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   // Modals
   const [isRadarOpen, setIsRadarOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isSecurityOpen, setIsSecurityOpen] = useState(false);
   const [history, setHistory] = useState<HistoryRecord[]>(() => {
     try {
-      const saved = localStorage.getItem('hexasend_history');
+      const saved = localStorage.getItem('instasend_history') || localStorage.getItem('hexasend_history');
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
@@ -66,6 +98,46 @@ export default function App() {
 
   const webrtcRef = useRef<WebRTCManager | null>(null);
 
+  // Save managed files to localStorage
+  const saveManagedFiles = (files: ManagedFile[]) => {
+    setManagedFiles(files);
+    try {
+      const serializable = files.map(f => {
+        const { blob, ...rest } = f;
+        return rest;
+      });
+      localStorage.setItem('instasend_managed_files', JSON.stringify(serializable));
+    } catch (e) {
+      console.error('Failed to save managed files to storage:', e);
+    }
+  };
+
+  // Add files to manager when staged or sent
+  const handleFilesStaged = (staged: FileItem[]) => {
+    if (staged.length === 0) return;
+    const now = Date.now();
+    const newManaged: ManagedFile[] = staged.map(f => ({
+      id: f.id,
+      name: f.name,
+      size: f.size,
+      type: f.type,
+      relativePath: f.relativePath,
+      direction: 'uploaded',
+      uploadedAt: now,
+      roomCode: roomCode || undefined,
+      blob: f.file || f.blob,
+      previewUrl: f.previewUrl,
+      downloadsCount: 0,
+      sha256: f.sha256
+    }));
+
+    const existingIds = new Set(managedFiles.map(m => m.id));
+    const toAdd = newManaged.filter(m => !existingIds.has(m.id));
+    if (toAdd.length > 0) {
+      saveManagedFiles([...toAdd, ...managedFiles]);
+    }
+  };
+
   // Parse URL query parameter for direct joins: ?code=XYZ123
   const [urlCode, setUrlCode] = useState<string>('');
   useEffect(() => {
@@ -74,6 +146,25 @@ export default function App() {
     if (code) {
       setUrlCode(code.toUpperCase());
       setActiveTab('receive');
+      setActiveView('transfer');
+    }
+
+    // Verify token and restore user profile from SQLite database
+    const token = localStorage.getItem('instasend_token');
+    if (token) {
+      fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data.success && data.user) {
+            setCurrentUser(data.user);
+            localStorage.setItem('instasend_user', JSON.stringify(data.user));
+          } else {
+            localStorage.removeItem('instasend_token');
+          }
+        })
+        .catch(() => {});
     }
   }, []);
 
@@ -82,7 +173,7 @@ export default function App() {
     setHistory(prev => {
       const updated = [record, ...prev].slice(0, 50);
       try {
-        localStorage.setItem('hexasend_history', JSON.stringify(updated));
+        localStorage.setItem('instasend_history', JSON.stringify(updated));
       } catch (e) {
         console.error('Failed to save history:', e);
       }
@@ -92,13 +183,13 @@ export default function App() {
 
   const clearHistory = () => {
     setHistory([]);
-    localStorage.removeItem('hexasend_history');
+    localStorage.removeItem('instasend_history');
   };
 
   // Initialize WebRTC Manager
   useEffect(() => {
     const manager = new WebRTCManager({
-      onStateChange: (state, details) => {
+      onStateChange: (state) => {
         setSessionState(state);
         if (state === 'peer_connected') {
           sound.playConnect();
@@ -117,6 +208,7 @@ export default function App() {
             name: f.name,
             size: f.size,
             type: f.type || 'application/octet-stream',
+            relativePath: f.relativePath,
             progress: 0,
             bytesTransferred: 0,
             status: 'pending'
@@ -151,7 +243,7 @@ export default function App() {
       },
       onFileReceived: (fileItem) => {
         setReceivedFiles(prev => prev.map(f => f.id === fileItem.id ? fileItem : f));
-        // Add to history
+        
         saveHistoryRecord({
           id: Math.random().toString(36).substring(2, 10),
           direction: 'received',
@@ -165,9 +257,53 @@ export default function App() {
           durationMs: 0,
           avgSpeedBytesPerSec: metrics?.speedBytesPerSec || 0
         });
+
+        const managedItem: ManagedFile = {
+          id: fileItem.id,
+          name: fileItem.name,
+          size: fileItem.size,
+          type: fileItem.type,
+          relativePath: fileItem.relativePath,
+          direction: 'received',
+          uploadedAt: Date.now(),
+          roomCode: roomCode || undefined,
+          blob: fileItem.blob,
+          previewUrl: fileItem.previewUrl,
+          downloadsCount: 1,
+          sha256: fileItem.sha256
+        };
+        saveManagedFiles([managedItem, ...managedFiles.filter(m => m.id !== fileItem.id)]);
       },
       onTransferComplete: (completedFiles) => {
         setSessionState('completed');
+        if (currentUser) {
+          const totalBytes = completedFiles.reduce((acc, f) => acc + f.size, 0);
+          const bytesSent = activeTab === 'send' ? totalBytes : 0;
+          const bytesReceived = activeTab === 'receive' ? totalBytes : 0;
+          const uploads = completedFiles.length;
+
+          const updated: UserProfile = {
+            ...currentUser,
+            totalUploads: currentUser.totalUploads + uploads,
+            totalBytesSent: currentUser.totalBytesSent + bytesSent,
+            totalBytesReceived: currentUser.totalBytesReceived + bytesReceived
+          };
+          setCurrentUser(updated);
+          localStorage.setItem('instasend_user', JSON.stringify(updated));
+
+          // Also persist directly into server SQLite database
+          const token = localStorage.getItem('instasend_token');
+          if (token) {
+            fetch('/api/user/stats', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({ uploads, bytesSent, bytesReceived })
+            }).catch(() => {});
+          }
+        }
       },
       onChatMessage: (chatMsg) => {
         setChatMessages(prev => [...prev, chatMsg]);
@@ -191,9 +327,8 @@ export default function App() {
     return () => {
       manager.destroy();
     };
-  }, [roomCode, remotePeerInfo, metrics]);
+  }, [roomCode, remotePeerInfo, metrics, activeTab, currentUser, managedFiles]);
 
-  // Handle Reset Session
   const handleResetSession = () => {
     webrtcRef.current?.resetSession();
     setSessionState('idle');
@@ -213,14 +348,14 @@ export default function App() {
   };
 
   const handleSelectRadarPeer = (targetPeerId: string) => {
-    // Switch to send tab and notify
     setActiveTab('send');
-    // Prompt file selection if needed
+    setActiveView('transfer');
   };
 
   const acceptIncomingInvite = () => {
     if (!incomingInvite) return;
     setActiveTab('receive');
+    setActiveView('transfer');
     webrtcRef.current?.joinRoom(incomingInvite.roomCode);
     setIncomingInvite(null);
   };
@@ -229,9 +364,66 @@ export default function App() {
     setIncomingInvite(null);
   };
 
+  const handleLogin = (user: UserProfile) => {
+    setCurrentUser(user);
+    localStorage.setItem('instasend_user', JSON.stringify(user));
+  };
+
+  const handleLogout = () => {
+    const token = localStorage.getItem('instasend_token');
+    if (token) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      }).catch(() => {});
+    }
+    localStorage.removeItem('instasend_token');
+    localStorage.removeItem('instasend_user');
+    setCurrentUser(null);
+  };
+
+  const handleDeleteManagedFile = (id: string) => {
+    const updated = managedFiles.filter(f => f.id !== id);
+    saveManagedFiles(updated);
+  };
+
+  const handleDownloadManagedFile = (file: ManagedFile) => {
+    if (!file.blob) return;
+    const url = URL.createObjectURL(file.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  };
+
+  const handleShareManagedFile = (file: ManagedFile) => {
+    setActiveView('transfer');
+    setActiveTab('send');
+    if (file.blob) {
+      const fileItem: FileItem = {
+        id: file.id,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        relativePath: file.relativePath,
+        file: file.blob instanceof File ? file.blob : new File([file.blob], file.name, { type: file.type }),
+        progress: 0,
+        bytesTransferred: 0,
+        status: 'pending'
+      };
+      webrtcRef.current?.createRoom([fileItem]);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-emerald-500 selection:text-black">
-      {/* Top Header */}
+    <div className="min-h-screen bg-white text-[#202124] flex flex-col justify-between selection:bg-blue-100 selection:text-blue-900">
+      {/* Google Homepage Style Header */}
       <Header
         deviceInfo={deviceInfo}
         onUpdateDeviceName={(newName) => setDeviceInfo(prev => ({ ...prev, name: newName }))}
@@ -240,152 +432,212 @@ export default function App() {
         onOpenHistory={() => setIsHistoryOpen(true)}
         onOpenSecurity={() => setIsSecurityOpen(true)}
         historyCount={history.length}
+        currentUser={currentUser}
+        onOpenAuth={() => setIsAuthOpen(true)}
+        activeView={activeView}
+        onViewChange={(v) => setActiveView(v)}
+        managedFilesCount={managedFiles.length}
       />
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-8 flex flex-col justify-between">
-        <div className="space-y-6">
-          {/* Incoming Direct Invite Banner */}
-          {incomingInvite && (
-            <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-950/90 via-teal-950/80 to-slate-900 border border-emerald-500/40 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4 duration-300">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-                  <Radio className="w-5 h-5 animate-pulse" />
-                </div>
-                <div>
-                  <h4 className="text-xs sm:text-sm font-bold text-white">
-                    Direct Transfer Request
-                  </h4>
-                  <p className="text-xs text-slate-300">
-                    <strong>{incomingInvite.fromDeviceInfo?.name || 'A nearby device'}</strong> wants to share{' '}
-                    {incomingInvite.filesMeta?.length || 1} file(s) with you.
-                  </p>
-                </div>
+      {/* Main Google Homepage Center Stage */}
+      <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-6 sm:py-10 flex flex-col justify-center">
+        {/* Incoming Direct Transfer Alert */}
+        {incomingInvite && (
+          <div className="mb-6 p-4 rounded-2xl bg-white border border-[#ceead6] shadow-md flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-green-50 text-[#34A853] flex items-center justify-center shrink-0">
+                <Radio className="w-5 h-5 animate-pulse" />
               </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <button
-                  onClick={acceptIncomingInvite}
-                  className="flex-1 sm:flex-initial px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-md transition-colors"
-                >
-                  Accept & Receive
-                </button>
-                <button
-                  onClick={declineIncomingInvite}
-                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition-colors"
-                >
-                  Decline
-                </button>
+              <div>
+                <h4 className="text-xs sm:text-sm font-bold text-[#202124]">
+                  Direct Transfer Request
+                </h4>
+                <p className="text-xs text-[#5f6368]">
+                  <strong>{incomingInvite.fromDeviceInfo?.name || 'A nearby device'}</strong> wants to share{' '}
+                  {incomingInvite.filesMeta?.length || 1} file(s) with you.
+                </p>
               </div>
             </div>
-          )}
-
-          {/* Tab Navigation */}
-          <div className="flex justify-center">
-            <div className="inline-flex p-1.5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
               <button
-                onClick={() => {
-                  if (sessionState === 'idle') setActiveTab('send');
-                }}
-                disabled={sessionState !== 'idle' && activeTab !== 'send'}
-                className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
-                  activeTab === 'send'
-                    ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-md shadow-emerald-500/25'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
+                onClick={acceptIncomingInvite}
+                className="flex-1 sm:flex-initial px-4 py-2 rounded-full bg-[#1a73e8] hover:bg-[#1557b0] text-white font-medium text-xs shadow-xs transition-colors cursor-pointer"
               >
-                <SendIcon className="w-4 h-4" />
-                <span>Send</span>
+                Accept & Receive
               </button>
-
               <button
-                onClick={() => {
-                  if (sessionState === 'idle') setActiveTab('receive');
-                }}
-                disabled={sessionState !== 'idle' && activeTab !== 'receive'}
-                className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
-                  activeTab === 'receive'
-                    ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-md shadow-emerald-500/25'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
+                onClick={declineIncomingInvite}
+                className="px-3.5 py-2 rounded-full bg-[#f8f9fa] hover:bg-[#f1f3f4] text-[#3c4043] border border-[#dadce0] text-xs transition-colors cursor-pointer"
               >
-                <Download className="w-4 h-4" />
-                <span>Receive</span>
+                Decline
               </button>
             </div>
           </div>
+        )}
 
-          {/* Active Tab Panel */}
-          <div className="pt-2">
-            {activeTab === 'send' ? (
-              <SendTab
-                webrtc={webrtcRef.current}
-                state={sessionState}
-                roomCode={roomCode}
-                remotePeerInfo={remotePeerInfo}
-                metrics={metrics}
-                chatMessages={chatMessages}
-                onSendChat={handleSendChat}
-                onReset={handleResetSession}
-              />
-            ) : (
-              <ReceiveTab
-                webrtc={webrtcRef.current}
-                state={sessionState}
-                roomCode={roomCode}
-                remotePeerInfo={remotePeerInfo}
-                metrics={metrics}
-                receivedFiles={receivedFiles}
-                chatMessages={chatMessages}
-                onSendChat={handleSendChat}
-                onReset={handleResetSession}
-                initialCode={urlCode}
-                errorMessage={errorMessage}
-              />
-            )}
+        {/* Google Homepage Centerpiece Logo & Subtitle */}
+        {activeView === 'transfer' && sessionState === 'idle' && (
+          <div className="text-center mb-6 sm:mb-8 space-y-2">
+            {/* Iconic Google 4-Color Title */}
+            <h1 className="text-5xl sm:text-7xl font-normal tracking-tight select-none">
+              <span className="text-[#4285F4]">I</span>
+              <span className="text-[#EA4335]">n</span>
+              <span className="text-[#FBBC05]">s</span>
+              <span className="text-[#4285F4]">t</span>
+              <span className="text-[#34A853]">a</span>
+              <span className="text-[#EA4335]">S</span>
+              <span className="text-[#FBBC05]">e</span>
+              <span className="text-[#4285F4]">n</span>
+              <span className="text-[#34A853]">d</span>
+            </h1>
+            <p className="text-sm text-[#5f6368] font-normal">
+              Direct, encrypted peer-to-peer file transfer via WebRTC
+            </p>
           </div>
-        </div>
+        )}
 
-        {/* Feature Highlights Footer */}
-        <div className="mt-12 pt-8 border-t border-slate-900/80 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-slate-400">
-          <div className="flex items-start gap-3 p-3 rounded-xl bg-slate-900/40 border border-slate-800/40">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0">
-              <Zap className="w-4 h-4" />
-            </div>
-            <div>
-              <h5 className="font-bold text-slate-200">Zero Cloud Storage</h5>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Files are streamed directly between browser engines. No third-party servers ever touch your data.
-              </p>
-            </div>
-          </div>
+        {/* TRANSFER VIEW */}
+        {activeView === 'transfer' ? (
+          <div className="space-y-6">
+            {/* Google Style Action Switcher Pill */}
+            <div className="flex justify-center">
+              <div className="inline-flex p-1 rounded-full bg-[#f8f9fa] border border-[#dadce0] google-card-shadow">
+                <button
+                  onClick={() => {
+                    if (sessionState === 'idle') setActiveTab('send');
+                  }}
+                  disabled={sessionState !== 'idle' && activeTab !== 'send'}
+                  className={`flex items-center gap-2 px-6 py-2 rounded-full text-xs sm:text-sm font-medium transition-all cursor-pointer ${
+                    activeTab === 'send'
+                      ? 'bg-white text-[#1a73e8] shadow-xs font-semibold'
+                      : 'text-[#5f6368] hover:text-[#202124]'
+                  }`}
+                >
+                  <SendIcon className="w-3.5 h-3.5" />
+                  <span>Send Files</span>
+                </button>
 
-          <div className="flex items-start gap-3 p-3 rounded-xl bg-slate-900/40 border border-slate-800/40">
-            <div className="w-8 h-8 rounded-lg bg-teal-500/10 text-teal-400 flex items-center justify-center shrink-0">
-              <Lock className="w-4 h-4" />
+                <button
+                  onClick={() => {
+                    if (sessionState === 'idle') setActiveTab('receive');
+                  }}
+                  disabled={sessionState !== 'idle' && activeTab !== 'receive'}
+                  className={`flex items-center gap-2 px-6 py-2 rounded-full text-xs sm:text-sm font-medium transition-all cursor-pointer ${
+                    activeTab === 'receive'
+                      ? 'bg-white text-[#1a73e8] shadow-xs font-semibold'
+                      : 'text-[#5f6368] hover:text-[#202124]'
+                  }`}
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Receive Files</span>
+                </button>
+              </div>
             </div>
-            <div>
-              <h5 className="font-bold text-slate-200">DTLS 1.2 Encrypted</h5>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                All data channel packets are natively encrypted end-to-end with high-grade cryptographic protocols.
-              </p>
-            </div>
-          </div>
 
-          <div className="flex items-start gap-3 p-3 rounded-xl bg-slate-900/40 border border-slate-800/40">
-            <div className="w-8 h-8 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center shrink-0">
-              <ShieldCheck className="w-4 h-4" />
-            </div>
-            <div>
-              <h5 className="font-bold text-slate-200">SHA-256 Verified</h5>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Every file is verified byte-by-byte with SHA-256 cryptographic checksums before saving.
-              </p>
+            {/* Active Tab Component */}
+            <div className="pt-1">
+              {activeTab === 'send' ? (
+                <SendTab
+                  webrtc={webrtcRef.current}
+                  state={sessionState}
+                  roomCode={roomCode}
+                  remotePeerInfo={remotePeerInfo}
+                  metrics={metrics}
+                  chatMessages={chatMessages}
+                  onSendChat={handleSendChat}
+                  onReset={handleResetSession}
+                  onFilesStaged={handleFilesStaged}
+                  radarPeers={radarPeers}
+                  onSelectRadarPeer={handleSelectRadarPeer}
+                />
+              ) : (
+                <ReceiveTab
+                  webrtc={webrtcRef.current}
+                  state={sessionState}
+                  roomCode={roomCode}
+                  remotePeerInfo={remotePeerInfo}
+                  metrics={metrics}
+                  receivedFiles={receivedFiles}
+                  chatMessages={chatMessages}
+                  onSendChat={handleSendChat}
+                  onReset={handleResetSession}
+                  initialCode={urlCode}
+                  errorMessage={errorMessage}
+                />
+              )}
             </div>
           </div>
-        </div>
+        ) : (
+          /* FILE MANAGER VIEW */
+          <FileManager
+            files={managedFiles}
+            onDeleteFile={handleDeleteManagedFile}
+            onDownloadFile={handleDownloadManagedFile}
+            onShareFile={handleShareManagedFile}
+            onUploadClick={() => {
+              setActiveView('transfer');
+              setActiveTab('send');
+            }}
+            metrics={metrics}
+            activeRole={webrtcRef.current ? (sessionState === 'transferring' ? (activeTab === 'send' ? 'sender' : 'receiver') : null) : null}
+            transferState={sessionState}
+          />
+        )}
       </main>
 
+      {/* Google Homepage Signature 2-Tier Footer */}
+      <footer className="bg-[#f2f2f2] text-[#70757a] text-[13px] border-t border-[#dadce0] mt-12 select-none">
+        {/* Tier 1: Network & Region Status */}
+        <div className="px-6 py-3 border-b border-[#dadce0] flex items-center justify-between text-xs max-w-7xl mx-auto">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[#34A853]" />
+            <span>Local Mesh Network • Direct WebRTC Peer-to-Peer</span>
+          </div>
+          <span className="hidden sm:inline font-mono text-[11px]">
+            RAM-to-RAM DataChannel
+          </span>
+        </div>
+
+        {/* Tier 2: Google Style Links */}
+        <div className="px-6 py-3.5 flex flex-wrap items-center justify-between gap-y-2 max-w-7xl mx-auto text-xs">
+          <div className="flex items-center gap-4 sm:gap-6">
+            <button onClick={() => setIsSecurityOpen(true)} className="hover:text-[#202124] transition-colors">
+              Security
+            </button>
+            <button onClick={() => setIsRadarOpen(true)} className="hover:text-[#202124] transition-colors">
+              Radar
+            </button>
+            <button onClick={() => setActiveView('files')} className="hover:text-[#202124] transition-colors">
+              Files ({managedFiles.length})
+            </button>
+            <button onClick={() => setIsHistoryOpen(true)} className="hover:text-[#202124] transition-colors">
+              History
+            </button>
+          </div>
+
+          <div className="flex items-center gap-4 sm:gap-6">
+            <span className="flex items-center gap-1 text-[#137333]">
+              <ShieldCheck className="w-3.5 h-3.5" /> DTLS 1.2
+            </span>
+            <span className="hover:text-[#202124] transition-colors">
+              Zero Cloud Storage
+            </span>
+            <button onClick={() => setIsSecurityOpen(true)} className="hover:text-[#202124] transition-colors">
+              Privacy & Guarantee
+            </button>
+          </div>
+        </div>
+      </footer>
+
       {/* Modals */}
+      <AuthModal
+        isOpen={isAuthOpen}
+        onClose={() => setIsAuthOpen(false)}
+        currentUser={currentUser}
+        onLogin={handleLogin}
+        onLogout={handleLogout}
+      />
+
       <RadarModal
         isOpen={isRadarOpen}
         onClose={() => setIsRadarOpen(false)}

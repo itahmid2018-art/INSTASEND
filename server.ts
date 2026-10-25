@@ -272,6 +272,8 @@ function broadcastRadarPeers() {
   }
 }
 
+import { sqliteAuth } from './server/db.ts';
+
 // Express App APIs
 app.use(express.json());
 
@@ -280,8 +282,89 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     activePeers: peers.size,
     activeRooms: rooms.size,
+    sqlite: sqliteAuth.getDbStatus(),
     timestamp: new Date().toISOString()
   });
+});
+
+app.get('/api/db/status', (req, res) => {
+  res.json({
+    status: 'ok',
+    sqlite: sqliteAuth.getDbStatus()
+  });
+});
+
+app.post('/api/auth/signup', (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    const result = sqliteAuth.registerUser(name, email, password);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/auth/signin', (req, res) => {
+  try {
+    const { email, password, deviceName } = req.body;
+    const result = sqliteAuth.loginUser(email, password, deviceName);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(401).json({ success: false, message: err.message });
+  }
+});
+
+app.get('/api/auth/me', (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : (req.query.token as string);
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'No authorization token provided' });
+    }
+    const user = sqliteAuth.getUserByToken(token);
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'Session expired or invalid' });
+    }
+    res.json({ success: true, user });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : req.body.token;
+    if (token) {
+      sqliteAuth.revokeSession(token);
+    }
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/user/stats', (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : req.body.token;
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+    const user = sqliteAuth.getUserByToken(token);
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'Invalid session' });
+    }
+    const { uploads, bytesSent, bytesReceived } = req.body;
+    const updated = sqliteAuth.updateUserStats(user.id, {
+      uploads: Number(uploads) || 0,
+      bytesSent: Number(bytesSent) || 0,
+      bytesReceived: Number(bytesReceived) || 0
+    });
+    res.json({ success: true, user: updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 async function startServer() {
@@ -318,7 +401,7 @@ async function startServer() {
   }
 
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`HexaSend server running on http://0.0.0.0:${PORT}`);
+    console.log(`InstaSend server running on http://0.0.0.0:${PORT}`);
   });
 }
 

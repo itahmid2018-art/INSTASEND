@@ -32,80 +32,75 @@ export const RadarModal: React.FC<RadarModalProps> = ({
   const getDeviceIcon = (type: string) => {
     switch (type) {
       case 'mobile':
-        return <Smartphone className="w-5 h-5 text-emerald-400" />;
+        return <Smartphone className="w-5 h-5 text-[#4285F4]" />;
       case 'tablet':
-        return <Tablet className="w-5 h-5 text-emerald-400" />;
+        return <Tablet className="w-5 h-5 text-[#34A853]" />;
       default:
-        return <Laptop className="w-5 h-5 text-emerald-400" />;
+        return <Laptop className="w-5 h-5 text-[#4285F4]" />;
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-6 space-y-6 shadow-2xl relative overflow-hidden">
-        {/* Radar Background Visual */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20">
-          <div className="w-72 h-72 border border-emerald-500/30 rounded-full flex items-center justify-center">
-            <div className="w-48 h-48 border border-emerald-500/40 rounded-full flex items-center justify-center">
-              <div className="w-24 h-24 border border-emerald-500/50 rounded-full"></div>
-            </div>
-          </div>
-          {/* Radar Sweep Arm */}
-          <div className="absolute w-72 h-72 rounded-full radar-sweep overflow-hidden">
-            <div className="w-1/2 h-1/2 bg-gradient-to-br from-emerald-400/30 to-transparent origin-bottom-right" />
-          </div>
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+      <div className="bg-white border border-[#dadce0] rounded-2xl max-w-lg w-full p-6 space-y-6 shadow-2xl relative overflow-hidden">
+        {/* Google 4-Color Accent Bar */}
+        <div className="absolute top-0 left-0 right-0 h-1 flex">
+          <div className="flex-1 bg-[#4285F4]" />
+          <div className="flex-1 bg-[#EA4335]" />
+          <div className="flex-1 bg-[#FBBC05]" />
+          <div className="flex-1 bg-[#34A853]" />
         </div>
 
         {/* Modal Header */}
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3 relative z-10">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
-              <Radio className="w-4 h-4 animate-pulse" />
+        <div className="flex items-center justify-between border-b border-[#dadce0] pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-full bg-blue-50 text-[#1a73e8] flex items-center justify-center">
+              <Radio className="w-5 h-5 animate-pulse" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-white">Local Device Radar</h3>
-              <p className="text-[11px] text-slate-400">Discovering devices on your local network</p>
+              <h3 className="text-base font-bold text-[#202124]">Local Device Radar</h3>
+              <p className="text-xs text-[#5f6368]">Discovering devices on your local network</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-full text-[#5f6368] hover:text-[#202124] hover:bg-[#f1f3f4] transition-colors"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Local device status */}
-        <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 relative z-10 flex items-center justify-between text-xs">
+        <div className="p-3 rounded-xl bg-[#f8f9fa] border border-[#dadce0] flex items-center justify-between text-xs">
           <div className="flex items-center gap-2.5">
             {getDeviceIcon(currentDevice.type)}
             <div>
-              <span className="text-slate-400">This Device:</span>{' '}
-              <strong className="text-emerald-400">{currentDevice.name}</strong>
+              <span className="text-[#5f6368]">This Device:</span>{' '}
+              <strong className="text-[#202124]">{currentDevice.name}</strong>
             </div>
           </div>
-          <span className="text-[10px] text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded-full border border-emerald-800/40">
-            Broadcasting
+          <span className="text-[11px] font-medium text-[#137333] bg-green-50 px-2.5 py-0.5 rounded-full border border-[#ceead6]">
+            Active
           </span>
         </div>
 
         {/* Discovered Peers List */}
-        <div className="space-y-3 relative z-10">
-          <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between text-xs text-[#5f6368] px-1">
             <span>Devices Nearby ({peers.length})</span>
-            <span className="flex items-center gap-1 text-[11px]">
-              <RefreshCw className="w-3 h-3 animate-spin text-emerald-400" /> Scanning
+            <span className="flex items-center gap-1 text-[11px] text-[#1a73e8]">
+              <RefreshCw className="w-3 h-3 animate-spin" /> Scanning
             </span>
           </div>
 
           {peers.length === 0 ? (
-            <div className="p-8 text-center rounded-2xl bg-slate-950/50 border border-slate-800/80 space-y-2">
-              <div className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center mx-auto text-slate-400">
+            <div className="p-8 text-center rounded-2xl bg-[#f8f9fa] border border-[#dadce0] space-y-2">
+              <div className="w-12 h-12 rounded-full bg-white border border-[#dadce0] flex items-center justify-center mx-auto text-[#1a73e8]">
                 <Radio className="w-6 h-6 animate-pulse" />
               </div>
-              <p className="text-xs font-semibold text-slate-300">No other devices found yet</p>
-              <p className="text-[11px] text-slate-500 max-w-xs mx-auto">
-                Open HexaSend in another browser window, phone, or computer on the same network to see it appear here.
+              <p className="text-xs font-semibold text-[#202124]">No other devices detected yet</p>
+              <p className="text-[11px] text-[#5f6368] max-w-xs mx-auto">
+                Open InstaSend in another browser or phone on the same Wi-Fi network to see it appear here.
               </p>
             </div>
           ) : (
@@ -117,23 +112,23 @@ export const RadarModal: React.FC<RadarModalProps> = ({
                     onSelectPeer(peer.id);
                     onClose();
                   }}
-                  className="flex items-center justify-between p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 hover:border-emerald-500/50 hover:bg-slate-850 transition-all cursor-pointer group"
+                  className="flex items-center justify-between p-3.5 rounded-xl bg-white border border-[#dadce0] hover:border-[#1a73e8] hover:bg-blue-50/30 transition-all cursor-pointer group"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center group-hover:border-emerald-500/40">
+                    <div className="w-10 h-10 rounded-full bg-[#f8f9fa] border border-[#dadce0] flex items-center justify-center group-hover:border-[#1a73e8]">
                       {getDeviceIcon(peer.deviceInfo.type)}
                     </div>
                     <div>
-                      <p className="text-xs font-bold text-white group-hover:text-emerald-400 transition-colors">
+                      <p className="text-xs font-bold text-[#202124] group-hover:text-[#1a73e8] transition-colors">
                         {peer.deviceInfo.name}
                       </p>
-                      <p className="text-[11px] text-slate-400">
+                      <p className="text-[11px] text-[#5f6368]">
                         {peer.deviceInfo.browser} • {peer.deviceInfo.os}
                       </p>
                     </div>
                   </div>
 
-                  <button className="px-3 py-1.5 rounded-lg bg-emerald-500/10 group-hover:bg-emerald-500 text-emerald-400 group-hover:text-slate-950 text-xs font-bold flex items-center gap-1 transition-all">
+                  <button className="px-3.5 py-1.5 rounded-full bg-blue-50 group-hover:bg-[#1a73e8] text-[#1a73e8] group-hover:text-white text-xs font-medium flex items-center gap-1 transition-all">
                     <span>Send</span>
                     <Send className="w-3 h-3" />
                   </button>
@@ -144,11 +139,11 @@ export const RadarModal: React.FC<RadarModalProps> = ({
         </div>
 
         {/* Security footnote */}
-        <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500 relative z-10">
-          <span className="flex items-center gap-1 text-emerald-400">
-            <ShieldCheck className="w-3.5 h-3.5" /> Zero cloud relay
+        <div className="pt-2 border-t border-[#dadce0] flex items-center justify-between text-[11px] text-[#5f6368]">
+          <span className="flex items-center gap-1 text-[#137333]">
+            <ShieldCheck className="w-3.5 h-3.5" /> Direct P2P Link
           </span>
-          <span>WebRTC P2P Direct</span>
+          <span>Zero Server Storage</span>
         </div>
       </div>
     </div>

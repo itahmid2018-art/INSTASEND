@@ -1,5 +1,11 @@
 import { DeviceInfo, FileItem, TransferMetrics, ChatMessage } from '../types.ts';
 import { getLocalDeviceInfo, computeSHA256 } from './device.ts';
+import { 
+  isCompressibleTextFile, 
+  compressData, 
+  decompressData, 
+  calculateSavedPercentage 
+} from './compression.ts';
 
 const CHUNK_SIZE = 64 * 1024; // 64 KB per chunk
 const BUFFER_HIGH_WATERMARK = 1.5 * 1024 * 1024; // 1.5 MB
@@ -43,6 +49,7 @@ export class WebRTCManager {
   private receivedFiles: Map<string, { meta: FileItem; chunks: ArrayBuffer[]; receivedBytes: number }> = new Map();
   private isTransferring = false;
   private isCancelled = false;
+  private compressTextFiles = true; // Enabled by default for .txt, .json, .md
 
   private events: Partial<WebRTCEvents> = {};
   private pingInterval: any = null;
@@ -58,6 +65,14 @@ export class WebRTCManager {
 
   public updateEvents(events: Partial<WebRTCEvents>) {
     this.events = { ...this.events, ...events };
+  }
+
+  public setCompressTextFiles(enabled: boolean) {
+    this.compressTextFiles = enabled;
+  }
+
+  public getCompressTextFiles(): boolean {
+    return this.compressTextFiles;
   }
 
   // Connect to Signaling Server via WebSockets
@@ -329,7 +344,8 @@ export class WebRTCManager {
         id: f.id,
         name: f.name,
         size: f.size,
-        type: f.type
+        type: f.type,
+        relativePath: f.relativePath
       }))
     };
 
@@ -349,6 +365,7 @@ export class WebRTCManager {
               name: f.name,
               size: f.size,
               type: f.type || 'application/octet-stream',
+              relativePath: f.relativePath,
               progress: 0,
               bytesTransferred: 0,
               status: 'pending'
@@ -369,9 +386,33 @@ export class WebRTCManager {
           }
 
           case 'START_FILE_TRANSFER': {
-            const fileEntry = this.receivedFiles.get(msg.fileId);
+            let fileEntry = this.receivedFiles.get(msg.fileId);
             if (fileEntry) {
               fileEntry.meta.status = 'transferring';
+              if (msg.isCompressed) {
+                fileEntry.meta.isCompressed = true;
+                fileEntry.meta.compressedSize = msg.compressedSize || msg.size;
+                fileEntry.meta.originalSize = msg.originalSize || fileEntry.meta.size;
+              }
+            } else {
+              const newFileItem: FileItem = {
+                id: msg.fileId,
+                name: msg.name,
+                size: msg.originalSize || msg.size,
+                type: msg.type || 'application/octet-stream',
+                progress: 0,
+                bytesTransferred: 0,
+                status: 'transferring',
+                isCompressed: msg.isCompressed,
+                compressedSize: msg.compressedSize,
+                originalSize: msg.originalSize
+              };
+              fileEntry = {
+                meta: newFileItem,
+                chunks: [],
+                receivedBytes: 0
+              };
+              this.receivedFiles.set(msg.fileId, fileEntry);
             }
             this.events.onStateChange?.('transferring');
             if (this.transferStartTime === 0) {
@@ -384,8 +425,36 @@ export class WebRTCManager {
           case 'END_FILE_TRANSFER': {
             const fileEntry = this.receivedFiles.get(msg.fileId);
             if (fileEntry) {
-              // Assemble chunks into final Blob
-              const blob = new Blob(fileEntry.chunks, { type: fileEntry.meta.type });
+              const isCompressed = !!(msg.isCompressed || fileEntry.meta.isCompressed);
+              let blob: Blob;
+
+              if (isCompressed && fileEntry.chunks.length > 0) {
+                try {
+                  const totalCompressedLen = fileEntry.chunks.reduce((acc, c) => acc + c.byteLength, 0);
+                  const mergedUint8 = new Uint8Array(totalCompressedLen);
+                  let offset = 0;
+                  for (const chunk of fileEntry.chunks) {
+                    mergedUint8.set(new Uint8Array(chunk), offset);
+                    offset += chunk.byteLength;
+                  }
+
+                  const decompressed = decompressData(mergedUint8);
+                  blob = new Blob([decompressed as unknown as BlobPart], { type: fileEntry.meta.type });
+
+                  fileEntry.meta.isCompressed = true;
+                  fileEntry.meta.compressedSize = totalCompressedLen;
+                  const finalSize = (msg.originalSize || decompressed.byteLength) ?? 0;
+                  fileEntry.meta.originalSize = finalSize;
+                  fileEntry.meta.size = finalSize;
+                  fileEntry.meta.savedPercentage = calculateSavedPercentage(fileEntry.meta.size, totalCompressedLen);
+                } catch (decompErr) {
+                  console.warn('Decompression failed, falling back to raw chunks:', decompErr);
+                  blob = new Blob(fileEntry.chunks, { type: fileEntry.meta.type });
+                }
+              } else {
+                blob = new Blob(fileEntry.chunks, { type: fileEntry.meta.type });
+              }
+
               const sha256 = await computeSHA256(blob);
 
               let previewUrl: string | undefined = undefined;
@@ -442,7 +511,7 @@ export class WebRTCManager {
       // Byte 0-35: 36-char UTF-8 string FileID
       // Byte 36+: File chunk content
       const fileIdBytes = new Uint8Array(data, 0, 36);
-      const fileId = new TextDecoder().decode(fileIdBytes);
+      const fileId = new TextDecoder().decode(fileIdBytes).trim();
       const chunkData = data.slice(36);
 
       const fileEntry = this.receivedFiles.get(fileId);
@@ -450,7 +519,8 @@ export class WebRTCManager {
         fileEntry.chunks.push(chunkData);
         fileEntry.receivedBytes += chunkData.byteLength;
         fileEntry.meta.bytesTransferred = fileEntry.receivedBytes;
-        fileEntry.meta.progress = Math.min(100, Math.round((fileEntry.receivedBytes / fileEntry.meta.size) * 100));
+        const totalExpected = fileEntry.meta.compressedSize || fileEntry.meta.size || 1;
+        fileEntry.meta.progress = Math.min(100, Math.round((fileEntry.receivedBytes / totalExpected) * 100));
 
         this.calculateMetrics(fileId);
       }
@@ -482,40 +552,78 @@ export class WebRTCManager {
 
       fileItem.status = 'transferring';
 
+      const file = fileItem.file;
+      const isEligible = this.compressTextFiles && isCompressibleTextFile(file.name, file.type);
+      let isCompressed = false;
+      let dataToStream: Uint8Array | null = null;
+      let totalStreamBytes = file.size;
+
+      if (isEligible) {
+        try {
+          const rawBuffer = await file.arrayBuffer();
+          const rawUint8 = new Uint8Array(rawBuffer);
+          const compressed = compressData(rawUint8);
+          // Only use compression if it genuinely reduces file size
+          if (compressed.byteLength < rawUint8.byteLength) {
+            isCompressed = true;
+            dataToStream = compressed;
+            totalStreamBytes = compressed.byteLength;
+            fileItem.isCompressed = true;
+            fileItem.originalSize = file.size;
+            fileItem.compressedSize = compressed.byteLength;
+            fileItem.savedPercentage = calculateSavedPercentage(file.size, compressed.byteLength);
+          }
+        } catch (e) {
+          console.warn('Error compressing text file, streaming uncompressed:', e);
+        }
+      }
+
       // Signal start of this file
       this.dataChannel.send(JSON.stringify({
         action: 'START_FILE_TRANSFER',
         fileId: fileItem.id,
         name: fileItem.name,
-        size: fileItem.size,
-        type: fileItem.type
+        size: totalStreamBytes,
+        originalSize: file.size,
+        type: fileItem.type,
+        isCompressed,
+        compressedSize: isCompressed ? totalStreamBytes : undefined
       }));
 
-      // Stream file in chunks using FileReader / ArrayBuffer
-      const file = fileItem.file;
+      // Stream file in chunks
       let offset = 0;
       const fileIdPadded = fileItem.id.padEnd(36, ' ').substring(0, 36);
       const fileIdHeader = encoder.encode(fileIdPadded);
 
-      while (offset < file.size && !this.isCancelled) {
+      while (offset < totalStreamBytes && !this.isCancelled) {
         // Backpressure check: if buffer is high, wait for low watermark
         if (this.dataChannel.bufferedAmount > BUFFER_HIGH_WATERMARK) {
           await this.waitForBufferDrain();
         }
 
-        const chunkSlice = file.slice(offset, offset + CHUNK_SIZE);
-        const chunkBuffer = await chunkSlice.arrayBuffer();
+        let chunkByteLength: number;
+        let packet: Uint8Array;
 
-        // Combine 36-byte fileId header + chunk data
-        const packet = new Uint8Array(36 + chunkBuffer.byteLength);
-        packet.set(fileIdHeader, 0);
-        packet.set(new Uint8Array(chunkBuffer), 36);
+        if (isCompressed && dataToStream) {
+          const chunkSlice = dataToStream.subarray(offset, Math.min(totalStreamBytes, offset + CHUNK_SIZE));
+          chunkByteLength = chunkSlice.byteLength;
+          packet = new Uint8Array(36 + chunkByteLength);
+          packet.set(fileIdHeader, 0);
+          packet.set(chunkSlice, 36);
+        } else {
+          const chunkSlice = file.slice(offset, offset + CHUNK_SIZE);
+          const chunkBuffer = await chunkSlice.arrayBuffer();
+          chunkByteLength = chunkBuffer.byteLength;
+          packet = new Uint8Array(36 + chunkByteLength);
+          packet.set(fileIdHeader, 0);
+          packet.set(new Uint8Array(chunkBuffer), 36);
+        }
 
-        this.dataChannel.send(packet.buffer);
+        this.dataChannel.send((packet.buffer as unknown) as ArrayBuffer);
 
-        offset += chunkBuffer.byteLength;
+        offset += chunkByteLength;
         fileItem.bytesTransferred = offset;
-        fileItem.progress = Math.min(100, Math.round((offset / file.size) * 100));
+        fileItem.progress = Math.min(100, Math.round((offset / totalStreamBytes) * 100));
 
         this.calculateMetrics(fileItem.id);
       }
@@ -532,6 +640,9 @@ export class WebRTCManager {
       this.dataChannel.send(JSON.stringify({
         action: 'END_FILE_TRANSFER',
         fileId: fileItem.id,
+        isCompressed,
+        originalSize: file.size,
+        compressedSize: isCompressed ? totalStreamBytes : undefined,
         sha256
       }));
     }
@@ -619,7 +730,8 @@ export class WebRTCManager {
       percent,
       etaSeconds,
       chunksCompleted,
-      totalChunks
+      totalChunks,
+      speedType: this.role === 'sender' ? 'upload' : 'download'
     }, activeFileId);
   }
 

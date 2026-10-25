@@ -10,9 +10,13 @@ import {
   Edit2, 
   Check, 
   ShieldCheck,
-  Wifi
+  User,
+  FolderArchive,
+  ArrowRightLeft,
+  Grid,
+  Crown
 } from 'lucide-react';
-import { DeviceInfo } from '../types.ts';
+import { DeviceInfo, UserProfile } from '../types.ts';
 import { sound } from '../services/sound.ts';
 import { setCustomDeviceName } from '../services/device.ts';
 
@@ -24,6 +28,11 @@ interface HeaderProps {
   onOpenHistory: () => void;
   onOpenSecurity: () => void;
   historyCount: number;
+  currentUser: UserProfile | null;
+  onOpenAuth: () => void;
+  activeView: 'transfer' | 'files';
+  onViewChange: (view: 'transfer' | 'files') => void;
+  managedFilesCount: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -33,7 +42,12 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenRadar,
   onOpenHistory,
   onOpenSecurity,
-  historyCount
+  historyCount,
+  currentUser,
+  onOpenAuth,
+  activeView,
+  onViewChange,
+  managedFilesCount
 }) => {
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempName, setTempName] = useState(deviceInfo.name);
@@ -57,54 +71,71 @@ export const Header: React.FC<HeaderProps> = ({
   const getDeviceIcon = () => {
     switch (deviceInfo.type) {
       case 'mobile':
-        return <Smartphone className="w-4 h-4 text-emerald-400" />;
+        return <Smartphone className="w-3.5 h-3.5 text-[#4285F4]" />;
       case 'tablet':
-        return <Tablet className="w-4 h-4 text-emerald-400" />;
+        return <Tablet className="w-3.5 h-3.5 text-[#34A853]" />;
       default:
-        return <Laptop className="w-4 h-4 text-emerald-400" />;
+        return <Laptop className="w-3.5 h-3.5 text-[#4285F4]" />;
     }
   };
 
   return (
-    <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
-      <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-2">
-        {/* Brand Logo */}
-        <div className="flex items-center gap-3">
-          <div className="relative group cursor-pointer" onClick={() => window.location.reload()}>
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-cyan-400 p-[1px] shadow-lg shadow-emerald-500/20 group-hover:shadow-emerald-500/40 transition-shadow">
-              <div className="w-full h-full bg-slate-950 rounded-[11px] flex items-center justify-center">
-                <svg className="w-5 h-5 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <polygon points="12 2 2 8.5 2 15.5 12 22 22 15.5 22 8.5 12 2" />
-                  <path d="m16 10-4 4-4-4" />
-                  <path d="M12 14V6" />
-                </svg>
-              </div>
-            </div>
-            <span className="absolute -bottom-1 -right-1 flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-slate-950"></span>
+    <header className="bg-white border-b border-[#dadce0] sticky top-0 z-40">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+        {/* Left: Google Homepage Style Top Links */}
+        <div className="flex items-center gap-6">
+          <div 
+            className="flex items-center gap-1 cursor-pointer select-none group" 
+            onClick={() => onViewChange('transfer')}
+          >
+            {/* Google Multicolor Brand Wordmark */}
+            <span className="text-xl sm:text-2xl font-bold tracking-tight">
+              <span className="text-[#4285F4]">I</span>
+              <span className="text-[#EA4335]">n</span>
+              <span className="text-[#FBBC05]">s</span>
+              <span className="text-[#4285F4]">t</span>
+              <span className="text-[#34A853]">a</span>
+              <span className="text-[#EA4335]">S</span>
+              <span className="text-[#FBBC05]">e</span>
+              <span className="text-[#4285F4]">n</span>
+              <span className="text-[#34A853]">d</span>
             </span>
           </div>
 
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-extrabold text-xl tracking-tight bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent">
-                HEXA<span className="text-emerald-400">SEND</span>
-              </span>
-              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800/50">
-                P2P WebRTC
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 hidden sm:block">
-              Direct device-to-device secure sharing
-            </p>
-          </div>
+          {/* Navigation items like Google 'Images' / 'Maps' */}
+          <nav className="hidden sm:flex items-center gap-1">
+            <button
+              onClick={() => onViewChange('transfer')}
+              className={`px-3 py-1.5 rounded-full text-[13px] font-medium transition-colors ${
+                activeView === 'transfer'
+                  ? 'bg-blue-50 text-[#1a73e8] font-semibold'
+                  : 'text-[#5f6368] hover:text-[#202124] hover:bg-[#f1f3f4]'
+              }`}
+            >
+              Transfer
+            </button>
+            <button
+              onClick={() => onViewChange('files')}
+              className={`px-3 py-1.5 rounded-full text-[13px] font-medium transition-colors flex items-center gap-1.5 ${
+                activeView === 'files'
+                  ? 'bg-blue-50 text-[#1a73e8] font-semibold'
+                  : 'text-[#5f6368] hover:text-[#202124] hover:bg-[#f1f3f4]'
+              }`}
+            >
+              <span>Files</span>
+              {managedFilesCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[11px] bg-[#e8f0fe] text-[#1a73e8] font-semibold">
+                  {managedFilesCount}
+                </span>
+              )}
+            </button>
+          </nav>
         </div>
 
-        {/* Right actions */}
+        {/* Right: Google Homepage Header Controls */}
         <div className="flex items-center gap-2 sm:gap-3">
           {/* Device Nickname Pill */}
-          <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/90 border border-slate-800 text-xs text-slate-300">
+          <div className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#f8f9fa] border border-[#dadce0] text-xs text-[#3c4043]">
             {getDeviceIcon()}
             {isEditingName ? (
               <div className="flex items-center gap-1">
@@ -113,70 +144,108 @@ export const Header: React.FC<HeaderProps> = ({
                   value={tempName}
                   onChange={(e) => setTempName(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && saveName()}
-                  className="bg-slate-800 border border-emerald-500 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none w-32"
+                  className="bg-white border border-[#1a73e8] rounded px-1.5 py-0.5 text-xs text-[#202124] focus:outline-none w-28"
                   autoFocus
                 />
-                <button onClick={saveName} className="text-emerald-400 hover:text-emerald-300">
+                <button onClick={saveName} className="text-[#1a73e8]">
                   <Check className="w-3.5 h-3.5" />
                 </button>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5 group cursor-pointer" onClick={() => setIsEditingName(true)}>
-                <span className="max-w-[130px] truncate font-medium text-slate-200">{deviceInfo.name}</span>
-                <Edit2 className="w-3 h-3 text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex items-center gap-1 group cursor-pointer" onClick={() => setIsEditingName(true)}>
+                <span className="max-w-[120px] truncate font-medium">{deviceInfo.name}</span>
+                <Edit2 className="w-3 h-3 text-[#5f6368] opacity-0 group-hover:opacity-100 transition-opacity" />
               </div>
             )}
           </div>
 
-          {/* Radar / Nearby Button */}
+          {/* Radar Button */}
           <button
             onClick={onOpenRadar}
-            className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
               radarPeerCount > 0
-                ? 'bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60 shadow-sm shadow-emerald-500/20'
-                : 'bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-white'
+                ? 'bg-green-50 text-[#188038] border border-[#ceead6]'
+                : 'text-[#5f6368] hover:text-[#202124] hover:bg-[#f1f3f4]'
             }`}
             title="Local Radar Discovery"
           >
-            <Radio className={`w-3.5 h-3.5 ${radarPeerCount > 0 ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`} />
+            <Radio className={`w-3.5 h-3.5 ${radarPeerCount > 0 ? 'text-[#34a853] animate-pulse' : 'text-[#5f6368]'}`} />
             <span className="hidden sm:inline">Radar</span>
             {radarPeerCount > 0 && (
-              <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-emerald-500 text-slate-950">
+              <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-[#34a853] text-white">
                 {radarPeerCount}
               </span>
             )}
           </button>
 
-          {/* History Button */}
+          {/* History Link */}
           <button
             onClick={onOpenHistory}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-white text-xs font-medium transition-colors"
+            className="hidden sm:flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium text-[#5f6368] hover:text-[#202124] hover:bg-[#f1f3f4] transition-colors"
             title="Transfer History"
           >
-            <History className="w-3.5 h-3.5 text-slate-400" />
-            <span className="hidden sm:inline">History</span>
+            <History className="w-3.5 h-3.5 text-[#5f6368]" />
+            <span>History</span>
             {historyCount > 0 && (
-              <span className="text-[10px] font-semibold text-slate-400">({historyCount})</span>
+              <span className="text-[11px] text-[#5f6368]">({historyCount})</span>
             )}
           </button>
 
-          {/* Security Guarantee Pill */}
+          {/* Security Pill */}
           <button
             onClick={onOpenSecurity}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/60 border border-slate-800/80 text-emerald-400 hover:bg-slate-800 text-xs font-medium transition-colors"
+            className="hidden md:flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium text-[#188038] hover:bg-green-50 transition-colors"
             title="End-to-End Security Architecture"
           >
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline text-slate-300">Encrypted</span>
+            <ShieldCheck className="w-3.5 h-3.5 text-[#34a853]" />
+            <span>Encrypted</span>
           </button>
 
           {/* Sound Toggle */}
           <button
             onClick={toggleSound}
-            className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
-            title={soundEnabled ? 'Mute Sounds' : 'Unmute Sounds'}
+            className="w-9 h-9 rounded-full flex items-center justify-center text-[#5f6368] hover:text-[#202124] hover:bg-[#f1f3f4] transition-colors"
+            title={soundEnabled ? 'Mute Audio Chimes' : 'Enable Audio Chimes'}
           >
-            {soundEnabled ? <Volume2 className="w-3.5 h-3.5 text-emerald-400" /> : <VolumeX className="w-3.5 h-3.5" />}
+            {soundEnabled ? <Volume2 className="w-4 h-4 text-[#1a73e8]" /> : <VolumeX className="w-4 h-4" />}
+          </button>
+
+          {/* Google 9-Dots Apps Menu Icon */}
+          <div 
+            onClick={onOpenSecurity}
+            className="w-9 h-9 rounded-full flex items-center justify-center text-[#5f6368] hover:text-[#202124] hover:bg-[#f1f3f4] cursor-pointer transition-colors"
+            title="InstaSend Features"
+          >
+            <Grid className="w-4 h-4" />
+          </div>
+
+          {/* Google-style 'Sign In' Button or Profile Avatar */}
+          <button
+            onClick={onOpenAuth}
+            className={`flex items-center gap-2 transition-all cursor-pointer ${
+              currentUser
+                ? 'p-0.5 rounded-full hover:ring-2 hover:ring-[#1a73e8]/30'
+                : 'px-5 py-2 rounded-full bg-[#1a73e8] hover:bg-[#1557b0] text-white text-[13px] font-medium shadow-xs'
+            }`}
+          >
+            {currentUser ? (
+              <div className="w-8 h-8 rounded-full overflow-hidden border border-[#dadce0] relative">
+                {currentUser.avatar ? (
+                  <img src={currentUser.avatar} alt={currentUser.name} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full bg-[#1a73e8] text-white flex items-center justify-center font-bold text-xs">
+                    {currentUser.name.charAt(0).toUpperCase()}
+                  </div>
+                )}
+                {currentUser.plan === 'pro' && (
+                  <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-[#fbbc05] border border-white rounded-full flex items-center justify-center">
+                    <Crown className="w-2 h-2 text-white fill-white" />
+                  </span>
+                )}
+              </div>
+            ) : (
+              <span>Sign in</span>
+            )}
           </button>
         </div>
       </div>
