@@ -19,9 +19,11 @@ const wss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (request, socket, head) => {
   const protocol = request.headers['sec-websocket-protocol'];
-  // Do not intercept or interfere with Vite HMR WebSockets
+  // Gracefully accept Vite HMR WebSockets without aborting socket to prevent "WebSocket closed without opened" errors
   if (protocol === 'vite-hmr') {
-    socket.destroy();
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      ws.on('error', () => {});
+    });
     return;
   }
 
@@ -35,7 +37,9 @@ server.on('upgrade', (request, socket, head) => {
         wss.emit('connection', ws, request);
       });
     } else {
-      socket.destroy();
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        ws.close(1000, 'Normal Closure');
+      });
     }
   } catch {
     socket.destroy();

@@ -6,19 +6,48 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' ws: wss: https: blob:; worker-src 'self' blob:;" />
     <script>
       // Gracefully prevent transient Vite dev-server HMR WebSocket disconnects from bubbling up as unhandled errors
-      window.addEventListener('error', function(event) {
-        if (event && event.message && (event.message.includes('WebSocket') || event.message.includes('vite') || event.message.includes('@vite'))) {
-          event.preventDefault?.();
-          event.stopPropagation?.();
-          return true;
+      (function() {
+        function isViteHmrError(err) {
+          if (!err) return false;
+          var str = '';
+          if (typeof err === 'string') str = err;
+          else if (err.message) str = err.message + ' ' + (err.stack || '');
+          else str = String(err);
+          return str.indexOf('WebSocket') !== -1 || 
+                 str.indexOf('vite') !== -1 || 
+                 str.indexOf('@vite') !== -1 || 
+                 str.indexOf('closed without opened') !== -1;
         }
-      }, true);
-      window.addEventListener('unhandledrejection', function(event) {
-        if (event && event.reason && String(event.reason).includes('WebSocket')) {
-          event.preventDefault?.();
-          event.stopPropagation?.();
-        }
-      }, true);
+
+        window.addEventListener('error', function(event) {
+          if (isViteHmrError(event.message) || isViteHmrError(event.error)) {
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            event.stopImmediatePropagation?.();
+            return true;
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(event) {
+          if (isViteHmrError(event.reason)) {
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            event.stopImmediatePropagation?.();
+          }
+        }, true);
+
+        var origConsoleError = console.error;
+        console.error = function() {
+          var args = Array.prototype.slice.call(arguments);
+          var combined = args.map(function(a) {
+            return (a && (a.message || a.stack || String(a))) || '';
+          }).join(' ');
+          if (isViteHmrError(combined)) {
+            return;
+          }
+          origConsoleError.apply(console, args);
+        };
+      })();
 
       // Pre-hydration dark theme initial detection to prevent flashing
       try {
