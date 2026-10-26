@@ -63,11 +63,12 @@ export function formatBytes(bytes: number, decimals = 1): string {
 }
 
 export function formatDuration(seconds: number): string {
-  if (!isFinite(seconds) || seconds <= 0) return 'Calculating...';
-  if (seconds < 60) return `${Math.ceil(seconds)}s`;
+  if (!isFinite(seconds) || seconds <= 0) return 'Almost done...';
+  if (seconds < 1) return '< 1s remaining';
+  if (seconds < 60) return `${Math.ceil(seconds)}s remaining`;
   const mins = Math.floor(seconds / 60);
   const secs = Math.ceil(seconds % 60);
-  return `${mins}m ${secs}s`;
+  return `${mins}m ${secs}s remaining`;
 }
 
 // Compute SHA-256 hash using Web Crypto API

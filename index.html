@@ -30,61 +30,44 @@
         }
 
         if (OrigWebSocket) {
-          function FakeViteWebSocket(url, protocols) {
-            var target = document.createDocumentFragment();
-            this.url = url || '';
-            this.protocol = Array.isArray(protocols) ? protocols[0] : (protocols || 'vite-hmr');
-            this.readyState = OrigWebSocket.OPEN;
-            this.CONNECTING = 0;
-            this.OPEN = 1;
-            this.CLOSING = 2;
-            this.CLOSED = 3;
-            this.bufferedAmount = 0;
-            this.extensions = '';
-            this.binaryType = 'blob';
-            this.onopen = null;
-            this.onmessage = null;
-            this.onerror = null;
-            this.onclose = null;
-
-            var self = this;
-            this.addEventListener = function(type, listener, options) {
-              target.addEventListener(type, listener, options);
-            };
-            this.removeEventListener = function(type, listener, options) {
-              target.removeEventListener(type, listener, options);
-            };
-            this.dispatchEvent = function(event) {
-              return target.dispatchEvent(event);
-            };
-            this.send = function() {};
-            this.close = function(code, reason) {
-              self.readyState = OrigWebSocket.CLOSED;
-              var closeEvt = new CustomEvent('close', { detail: { code: code || 1000, reason: reason || '', wasClean: true } });
-              Object.assign(closeEvt, { code: code || 1000, reason: reason || '', wasClean: true });
-              if (typeof self.onclose === 'function') {
-                try { self.onclose(closeEvt); } catch (e) {}
-              }
-              self.dispatchEvent(closeEvt);
-            };
-
-            setTimeout(function() {
-              if (self.readyState === OrigWebSocket.OPEN) {
-                var openEvt = new Event('open');
-                if (typeof self.onopen === 'function') {
-                  try { self.onopen(openEvt); } catch (e) {}
-                }
-                self.dispatchEvent(openEvt);
-              }
-            }, 0);
-          }
-
-          FakeViteWebSocket.prototype = Object.create(OrigWebSocket.prototype);
-          FakeViteWebSocket.prototype.constructor = FakeViteWebSocket;
-
           function PatchedWebSocket(url, protocols) {
             if (isViteHmr(url, protocols)) {
-              return new FakeViteWebSocket(url, protocols);
+              var fake = {
+                url: url || '',
+                protocol: 'vite-hmr',
+                readyState: 1, // OPEN
+                CONNECTING: 0,
+                OPEN: 1,
+                CLOSING: 2,
+                CLOSED: 3,
+                bufferedAmount: 0,
+                extensions: '',
+                binaryType: 'blob',
+                onopen: null,
+                onmessage: null,
+                onerror: null,
+                onclose: null,
+                addEventListener: function(type, listener) {
+                  if (type === 'open' && this.onopen) {
+                    try { this.onopen({ type: 'open' }); } catch(e){}
+                  }
+                },
+                removeEventListener: function() {},
+                dispatchEvent: function() { return false; },
+                send: function() {},
+                close: function() {
+                  this.readyState = 3;
+                  if (this.onclose) {
+                    try { this.onclose({ type: 'close', code: 1000, reason: '', wasClean: true }); } catch(e){}
+                  }
+                }
+              };
+              setTimeout(function() {
+                if (typeof fake.onopen === 'function') {
+                  try { fake.onopen({ type: 'open' }); } catch(e){}
+                }
+              }, 0);
+              return fake;
             }
             if (protocols !== undefined) {
               return new OrigWebSocket(url, protocols);
@@ -92,7 +75,6 @@
             return new OrigWebSocket(url);
           }
 
-          PatchedWebSocket.prototype = OrigWebSocket.prototype;
           PatchedWebSocket.CONNECTING = 0;
           PatchedWebSocket.OPEN = 1;
           PatchedWebSocket.CLOSING = 2;

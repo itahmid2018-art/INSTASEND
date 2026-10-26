@@ -693,13 +693,13 @@ export class WebRTCManager {
       });
     }
 
-    if (timeDelta >= 0.3) {
+    if (timeDelta >= 0.15) {
       const bytesSinceLast = totalBytesTransferred - this.lastTransferredBytes;
       const currentSpeed = bytesSinceLast / timeDelta;
-      // Exponential moving average for smooth display
+      // Exponential moving average for smooth, responsive display
       this.smoothedSpeed = this.smoothedSpeed === 0 
         ? currentSpeed 
-        : 0.7 * this.smoothedSpeed + 0.3 * currentSpeed;
+        : 0.5 * this.smoothedSpeed + 0.5 * currentSpeed;
 
       this.lastTransferredBytes = totalBytesTransferred;
       this.lastSpeedSampleTime = now;
