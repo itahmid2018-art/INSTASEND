@@ -69,6 +69,15 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
   const [showChat, setShowChat] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [isQRScannerOpen, setIsQRScannerOpen] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  const copyShareLink = () => {
+    if (!roomCode) return;
+    const shareUrl = `${window.location.origin}/?code=${roomCode}`;
+    navigator.clipboard.writeText(shareUrl);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
+  };
 
   // 6 discrete character input boxes
   const [charBoxes, setCharBoxes] = useState<string[]>(['', '', '', '', '', '']);
@@ -359,7 +368,28 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {roomCode && (
+              <button
+                type="button"
+                onClick={copyShareLink}
+                className="px-3 py-1.5 rounded-full bg-blue-50 hover:bg-blue-100 text-[#1a73e8] font-medium text-xs flex items-center gap-1.5 border border-blue-200 transition-all cursor-pointer shadow-2xs"
+                title="Copy share link with room code"
+              >
+                {copiedLink ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-[#34A853]" />
+                    <span>Link Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 text-[#1a73e8]" />
+                    <span>Copy Share Link</span>
+                  </>
+                )}
+              </button>
+            )}
+
             <button
               onClick={() => setShowChat(!showChat)}
               className={`px-3 py-1.5 rounded-full text-xs font-medium border flex items-center gap-1.5 transition-colors ${
@@ -423,8 +453,19 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
                 />
               </div>
 
-              <div className="flex items-center justify-between text-[11px] text-[#5f6368] font-mono">
+              <div className="flex items-center justify-between text-[11px] text-[#5f6368] font-mono flex-wrap gap-2">
                 <span>{formatBytes(metrics.bytesTransferred)} / {formatBytes(metrics.totalBytes)} ({metrics.percent}%)</span>
+                {metrics.networkStatus && metrics.networkStatus !== 'optimal' ? (
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 ${
+                    metrics.networkStatus === 'throttling' ? 'bg-red-50 text-[#d93025] border border-red-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                  }`}>
+                    ⚠️ {metrics.networkStatus.toUpperCase()} ({formatBytes(metrics.bufferedAmount || 0)})
+                  </span>
+                ) : (
+                  <span className="text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded text-[10px] font-semibold">
+                    Buffer Optimal
+                  </span>
+                )}
                 {state === 'transferring' && <span>ETA: {formatDuration(metrics.etaSeconds)}</span>}
               </div>
             </div>

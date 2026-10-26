@@ -851,10 +851,10 @@ export const SendTab: React.FC<SendTabProps> = ({
               <button
                 type="button"
                 onClick={copyShareLink}
-                className="flex items-center gap-2 text-xs text-[#3c4043] hover:text-[#202124] bg-[#f8f9fa] hover:bg-[#f1f3f4] px-3.5 py-1.5 rounded-full border border-[#dadce0] transition-colors cursor-pointer"
+                className="flex items-center gap-2 text-xs text-[#3c4043] hover:text-[#202124] bg-[#f8f9fa] hover:bg-[#f1f3f4] px-3.5 py-1.5 rounded-full border border-[#dadce0] transition-colors cursor-pointer font-medium"
               >
-                {copiedLink ? <Check className="w-3.5 h-3.5 text-[#34A853]" /> : <Share2 className="w-3.5 h-3.5 text-[#5f6368]" />}
-                <span>{copiedLink ? 'Link Copied!' : 'Copy Direct Link'}</span>
+                {copiedLink ? <Check className="w-3.5 h-3.5 text-[#34A853]" /> : <Copy className="w-3.5 h-3.5 text-[#1a73e8]" />}
+                <span>{copiedLink ? 'Link Copied!' : 'Copy Share Link'}</span>
               </button>
 
               <button
@@ -1038,18 +1038,42 @@ export const SendTab: React.FC<SendTabProps> = ({
                 </p>
               </div>
 
-              {/* Upload Speed Display on Sender's System */}
-              <div className="text-right">
-                <div className="flex items-center justify-end gap-1 text-xs text-[#5f6368]">
-                  <span className="w-2 h-2 rounded-full bg-[#1a73e8] animate-ping" />
-                  <span>Upload Speed</span>
-                </div>
-                <span className="text-lg font-mono font-bold text-[#1a73e8]">
-                  {state === 'completed' ? 'Done' : metrics.formattedSpeed}
-                </span>
-                {state === 'transferring' && (
-                  <p className="text-[11px] text-[#70757a]">ETA: {formatDuration(metrics.etaSeconds)}</p>
+              {/* Copy Share Link in Active Transfer State */}
+              <div className="flex items-center gap-3 flex-wrap">
+                {roomCode && (
+                  <button
+                    type="button"
+                    onClick={copyShareLink}
+                    className="px-3 py-1.5 rounded-full bg-blue-50 hover:bg-blue-100 text-[#1a73e8] font-medium text-xs flex items-center gap-1.5 border border-blue-200 transition-all cursor-pointer shadow-2xs"
+                    title="Copy direct share link with room code"
+                  >
+                    {copiedLink ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-[#34A853]" />
+                        <span>Link Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 text-[#1a73e8]" />
+                        <span>Copy Share Link</span>
+                      </>
+                    )}
+                  </button>
                 )}
+
+                {/* Upload Speed Display on Sender's System */}
+                <div className="text-right">
+                  <div className="flex items-center justify-end gap-1 text-xs text-[#5f6368]">
+                    <span className="w-2 h-2 rounded-full bg-[#1a73e8] animate-ping" />
+                    <span>Upload Speed</span>
+                  </div>
+                  <span className="text-lg font-mono font-bold text-[#1a73e8]">
+                    {state === 'completed' ? 'Done' : metrics.formattedSpeed}
+                  </span>
+                  {state === 'transferring' && (
+                    <p className="text-[11px] text-[#70757a]">ETA: {formatDuration(metrics.etaSeconds)}</p>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1061,8 +1085,19 @@ export const SendTab: React.FC<SendTabProps> = ({
               />
             </div>
 
-            <div className="flex items-center justify-between text-[11px] text-[#5f6368] font-mono">
+            <div className="flex items-center justify-between text-[11px] text-[#5f6368] font-mono flex-wrap gap-2">
               <span>Chunks: {metrics.chunksCompleted} / {metrics.totalChunks} (64KB packets)</span>
+              {metrics.networkStatus && metrics.networkStatus !== 'optimal' ? (
+                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 ${
+                  metrics.networkStatus === 'throttling' ? 'bg-red-50 text-[#d93025] border border-red-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                }`}>
+                  ⚠️ Network {metrics.networkStatus.toUpperCase()} ({formatBytes(metrics.bufferedAmount || 0)} buffer)
+                </span>
+              ) : (
+                <span className="text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded text-[10px] font-semibold">
+                  Buffer Optimal ({formatBytes(metrics.bufferedAmount || 0)})
+                </span>
+              )}
               <span className="flex items-center gap-1 text-[#188038]">
                 <ShieldCheck className="w-3.5 h-3.5" /> DTLS 1.2 Encrypted
               </span>

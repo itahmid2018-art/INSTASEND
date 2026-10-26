@@ -57,6 +57,8 @@ export class WebRTCManager {
   private lastTransferredBytes = 0;
   private lastSpeedSampleTime = 0;
   private smoothedSpeed = 0;
+  private chatMessageTimestamps: number[] = [];
+  private lastBufferWarningTime = 0;
 
   constructor(events: Partial<WebRTCEvents>) {
     this.events = events;
@@ -721,6 +723,18 @@ export class WebRTCManager {
 
     const totalChunks = Math.ceil(totalBytes / CHUNK_SIZE);
     const chunksCompleted = Math.min(totalChunks, Math.ceil(totalBytesTransferred / CHUNK_SIZE));
+    const bufferedAmount = this.dataChannel ? this.dataChannel.bufferedAmount : 0;
+    let networkStatus: 'optimal' | 'congested' | 'throttling' = 'optimal';
+
+    if (bufferedAmount > 3 * 1024 * 1024) {
+      networkStatus = 'throttling';
+      if (now - this.lastBufferWarningTime > 5000) {
+        this.lastBufferWarningTime = now;
+        this.events.onError?.(`Network Congestion Warning: DataChannel buffer is heavily loaded (~${(bufferedAmount / 1024 / 1024).toFixed(1)}MB pending). Throttling transmission to prevent packet loss.`);
+      }
+    } else if (bufferedAmount > 1.5 * 1024 * 1024) {
+      networkStatus = 'congested';
+    }
 
     this.events.onTransferProgress?.({
       speedBytesPerSec: speed,
@@ -731,19 +745,29 @@ export class WebRTCManager {
       etaSeconds,
       chunksCompleted,
       totalChunks,
-      speedType: this.role === 'sender' ? 'upload' : 'download'
+      speedType: this.role === 'sender' ? 'upload' : 'download',
+      bufferedAmount,
+      networkStatus
     }, activeFileId);
   }
 
-  // Send real-time chat/text snippet message
+  // Send real-time chat/text snippet message with rate limiting
   public sendChatMessage(text: string): ChatMessage | null {
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') return null;
+
+    const now = Date.now();
+    this.chatMessageTimestamps = this.chatMessageTimestamps.filter(t => now - t < 3000);
+    if (this.chatMessageTimestamps.length >= 5) {
+      this.events.onError?.('Rate Limit Exceeded: You are sending chat messages too quickly (max 5 per 3 seconds). Please wait before sending more.');
+      return null;
+    }
+    this.chatMessageTimestamps.push(now);
 
     const chatMsg: ChatMessage = {
       id: Math.random().toString(36).substring(2, 9),
       sender: 'self',
       text: text.trim(),
-      timestamp: Date.now()
+      timestamp: now
     };
 
     this.dataChannel.send(JSON.stringify({

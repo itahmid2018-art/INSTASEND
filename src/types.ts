@@ -76,6 +76,8 @@ export interface TransferMetrics {
   chunksCompleted: number;
   totalChunks: number;
   speedType: 'upload' | 'download';
+  bufferedAmount?: number;
+  networkStatus?: 'optimal' | 'congested' | 'throttling';
 }
 
 export interface PeerInfo {
