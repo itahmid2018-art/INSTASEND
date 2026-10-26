@@ -74,7 +74,7 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
   const [charBoxes, setCharBoxes] = useState<string[]>(['', '', '', '', '', '']);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  // Auto-fill from URL param if available
+  // Auto-fill from URL param if available & auto-connect
   useEffect(() => {
     if (initialCode && !roomCode) {
       const clean = initialCode.toUpperCase().slice(0, 6);
@@ -83,8 +83,14 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
       const boxes = ['', '', '', '', '', ''];
       parts.forEach((c, i) => { if (i < 6) boxes[i] = c; });
       setCharBoxes(boxes);
+
+      // Automatically join session when opened via QR code scan or share link
+      if (clean.length === 6 && state === 'idle' && webrtc) {
+        sound.playConnect();
+        webrtc.joinRoom(clean);
+      }
     }
-  }, [initialCode, roomCode]);
+  }, [initialCode, roomCode, state, webrtc]);
 
   // Confetti on completed
   useEffect(() => {

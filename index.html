@@ -6,7 +6,17 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' ws: wss: https: blob:; worker-src 'self' blob:;" />
     <script>
       // Gracefully prevent transient Vite dev-server HMR WebSocket disconnects from bubbling up as unhandled errors
+      // (Per environment constraints: "HMR: Disabled. Ignore WebSocket errors.")
       (function() {
+        var OrigWebSocket = window.WebSocket;
+
+        function isViteHmr(url, protocols) {
+          if (protocols === 'vite-hmr') return true;
+          if (Array.isArray(protocols) && protocols.indexOf('vite-hmr') !== -1) return true;
+          if (typeof url === 'string' && (url.indexOf('vite-hmr') !== -1 || url.indexOf('/@vite/') !== -1)) return true;
+          return false;
+        }
+
         function isViteHmrError(err) {
           if (!err) return false;
           var str = '';
@@ -19,22 +29,112 @@
                  str.indexOf('closed without opened') !== -1;
         }
 
+        if (OrigWebSocket) {
+          function FakeViteWebSocket(url, protocols) {
+            var target = document.createDocumentFragment();
+            this.url = url || '';
+            this.protocol = Array.isArray(protocols) ? protocols[0] : (protocols || 'vite-hmr');
+            this.readyState = OrigWebSocket.OPEN;
+            this.CONNECTING = 0;
+            this.OPEN = 1;
+            this.CLOSING = 2;
+            this.CLOSED = 3;
+            this.bufferedAmount = 0;
+            this.extensions = '';
+            this.binaryType = 'blob';
+            this.onopen = null;
+            this.onmessage = null;
+            this.onerror = null;
+            this.onclose = null;
+
+            var self = this;
+            this.addEventListener = function(type, listener, options) {
+              target.addEventListener(type, listener, options);
+            };
+            this.removeEventListener = function(type, listener, options) {
+              target.removeEventListener(type, listener, options);
+            };
+            this.dispatchEvent = function(event) {
+              return target.dispatchEvent(event);
+            };
+            this.send = function() {};
+            this.close = function(code, reason) {
+              self.readyState = OrigWebSocket.CLOSED;
+              var closeEvt = new CustomEvent('close', { detail: { code: code || 1000, reason: reason || '', wasClean: true } });
+              Object.assign(closeEvt, { code: code || 1000, reason: reason || '', wasClean: true });
+              if (typeof self.onclose === 'function') {
+                try { self.onclose(closeEvt); } catch (e) {}
+              }
+              self.dispatchEvent(closeEvt);
+            };
+
+            setTimeout(function() {
+              if (self.readyState === OrigWebSocket.OPEN) {
+                var openEvt = new Event('open');
+                if (typeof self.onopen === 'function') {
+                  try { self.onopen(openEvt); } catch (e) {}
+                }
+                self.dispatchEvent(openEvt);
+              }
+            }, 0);
+          }
+
+          FakeViteWebSocket.prototype = Object.create(OrigWebSocket.prototype);
+          FakeViteWebSocket.prototype.constructor = FakeViteWebSocket;
+
+          function PatchedWebSocket(url, protocols) {
+            if (isViteHmr(url, protocols)) {
+              return new FakeViteWebSocket(url, protocols);
+            }
+            if (protocols !== undefined) {
+              return new OrigWebSocket(url, protocols);
+            }
+            return new OrigWebSocket(url);
+          }
+
+          PatchedWebSocket.prototype = OrigWebSocket.prototype;
+          PatchedWebSocket.CONNECTING = 0;
+          PatchedWebSocket.OPEN = 1;
+          PatchedWebSocket.CLOSING = 2;
+          PatchedWebSocket.CLOSED = 3;
+
+          window.WebSocket = PatchedWebSocket;
+        }
+
         window.addEventListener('error', function(event) {
           if (isViteHmrError(event.message) || isViteHmrError(event.error)) {
-            event.preventDefault?.();
-            event.stopPropagation?.();
-            event.stopImmediatePropagation?.();
+            event.preventDefault && event.preventDefault();
+            event.stopPropagation && event.stopPropagation();
+            event.stopImmediatePropagation && event.stopImmediatePropagation();
             return true;
           }
         }, true);
 
         window.addEventListener('unhandledrejection', function(event) {
           if (isViteHmrError(event.reason)) {
-            event.preventDefault?.();
-            event.stopPropagation?.();
-            event.stopImmediatePropagation?.();
+            event.preventDefault && event.preventDefault();
+            event.stopPropagation && event.stopPropagation();
+            event.stopImmediatePropagation && event.stopImmediatePropagation();
           }
         }, true);
+
+        var origOnError = window.onerror;
+        window.onerror = function(msg, url, lineNo, columnNo, error) {
+          if (isViteHmrError(msg) || isViteHmrError(error)) {
+            return true;
+          }
+          if (origOnError) return origOnError.apply(this, arguments);
+          return false;
+        };
+
+        var origOnUnhandledRejection = window.onunhandledrejection;
+        window.onunhandledrejection = function(event) {
+          if (isViteHmrError(event && event.reason)) {
+            event && event.preventDefault && event.preventDefault();
+            return true;
+          }
+          if (origOnUnhandledRejection) return origOnUnhandledRejection.apply(this, arguments);
+        };
 
         var origConsoleError = console.error;
         console.error = function() {
@@ -46,6 +146,18 @@
             return;
           }
           origConsoleError.apply(console, args);
+        };
+
+        var origConsoleWarn = console.warn;
+        console.warn = function() {
+          var args = Array.prototype.slice.call(arguments);
+          var combined = args.map(function(a) {
+            return (a && (a.message || a.stack || String(a))) || '';
+          }).join(' ');
+          if (isViteHmrError(combined)) {
+            return;
+          }
+          origConsoleWarn.apply(console, args);
         };
       })();
 

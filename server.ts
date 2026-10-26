@@ -19,10 +19,12 @@ const wss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (request, socket, head) => {
   const protocol = request.headers['sec-websocket-protocol'];
+  const reqUrl = request.url || '';
   // Gracefully accept Vite HMR WebSockets without aborting socket to prevent "WebSocket closed without opened" errors
-  if (protocol === 'vite-hmr') {
+  if (protocol === 'vite-hmr' || reqUrl.includes('vite')) {
     wss.handleUpgrade(request, socket, head, (ws) => {
       ws.on('error', () => {});
+      ws.on('message', () => {});
     });
     return;
   }
