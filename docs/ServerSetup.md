@@ -228,8 +228,18 @@ server {
 
 ---
 
-## 8. Security & Privacy Summary
+## 9. Native Android Mobile & Android TV Compilation
 
-* **Zero Cloud Data Retention**: File payload data flows directly browser-to-browser via WebRTC SCTP DataChannels encrypted with DTLS 1.2.
-* **Text Compression**: Text files (`.txt`, `.json`, `.md`) are compressed locally via `pako` Deflate before transmission.
-* **SQLite Isolation**: Stored database files contain only user account metadata, scrypt hashes, and active device session tokens.
+InstaSend supports cross-platform native compilation for **Android Mobile (Phones & Tablets)** and **Android TV / Google TV** using Capacitor.
+
+For detailed prerequisites, Gradle compilation commands, keystore signing, ADB wireless installation, and Play Store pre-flight security checklists, refer to the dedicated guide:
+👉 **[docs/AndroidBuildGuide.md](./AndroidBuildGuide.md)**
+
+```bash
+# Build web bundle and sync native Capacitor Android project
+npm run build:android
+
+# Open in Android Studio
+npm run cap:open
+```
+

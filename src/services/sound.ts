@@ -60,7 +60,7 @@ class SoundService {
     }
   }
 
-  public playStart() {
+  public playPing() {
     if (!this.enabled) return;
     try {
       this.initContext();
@@ -70,21 +70,26 @@ class SoundService {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
 
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(320, now);
-      osc.frequency.linearRampToValueAtTime(640, now + 0.1);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.exponentialRampToValueAtTime(1320, now + 0.12);
 
-      gain.gain.setValueAtTime(0.08, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+      gain.gain.setValueAtTime(0.01, now);
+      gain.gain.linearRampToValueAtTime(0.15, now + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
 
       osc.connect(gain);
       gain.connect(this.ctx.destination);
 
       osc.start(now);
-      osc.stop(now + 0.18);
+      osc.stop(now + 0.2);
     } catch {
       // Ignore
     }
+  }
+
+  public playStart() {
+    this.playPing();
   }
 
   public playSuccess() {

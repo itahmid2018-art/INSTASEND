@@ -78,7 +78,7 @@ export class WebRTCManager {
   // Connect to Signaling Server via WebSockets
   private connectSignaling() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}`;
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
 
     try {
       this.ws = new WebSocket(wsUrl);
@@ -112,8 +112,8 @@ export class WebRTCManager {
         }
       };
 
-      this.ws.onerror = (err) => {
-        console.error('WebSocket error:', err);
+      this.ws.onerror = () => {
+        // Handle transient signaling WebSocket disconnects gracefully without unhandled error logs
       };
 
       this.ws.onclose = () => {
@@ -798,5 +798,127 @@ export class WebRTCManager {
       this.ws.close();
       this.ws = null;
     }
+  }
+
+  // ==========================================
+  // SERVERLESS OFFLINE DIRECT WEBRTC MODES
+  // (Works 100% serverless over Wi-Fi / Hotspot)
+  // ==========================================
+
+  public async createOfflineDirectOffer(files: FileItem[]): Promise<string> {
+    this.filesToSend = files;
+    this.role = 'sender';
+    this.initPeerConnection();
+
+    if (!this.pc) throw new Error('Could not initialize local WebRTC connection');
+
+    const channel = this.pc.createDataChannel('hexasend-data', { ordered: true });
+    this.setupDataChannel(channel);
+
+    const offer = await this.pc.createOffer();
+    await this.pc.setLocalDescription(offer);
+
+    // Wait for local ICE candidate gathering
+    await new Promise<void>((resolve) => {
+      if (this.pc?.iceGatheringState === 'complete') {
+        resolve();
+      } else {
+        const checkState = () => {
+          if (this.pc?.iceGatheringState === 'complete') {
+            this.pc.removeEventListener('icegatheringstatechange', checkState);
+            resolve();
+          }
+        };
+        this.pc?.addEventListener('icegatheringstatechange', checkState);
+        setTimeout(resolve, 1200);
+      }
+    });
+
+    const localDesc = this.pc.localDescription;
+    const rawSdp = localDesc ? localDesc.sdp : offer.sdp;
+    
+    const compactOffer = {
+      type: 'OFFLINE_OFFER',
+      sdp: rawSdp,
+      filesMeta: files.map(f => ({ name: f.name, size: f.size, type: f.type }))
+    };
+
+    return 'INSTASEND_OFFLINE_OFFER:' + btoa(JSON.stringify(compactOffer));
+  }
+
+  public async acceptOfflineDirectOffer(encodedOfferStr: string): Promise<string> {
+    this.role = 'receiver';
+    this.initPeerConnection();
+
+    if (!this.pc) throw new Error('Could not initialize local WebRTC connection');
+
+    let offerSdp = '';
+    let filesMeta: any[] = [];
+
+    if (encodedOfferStr.startsWith('INSTASEND_OFFLINE_OFFER:')) {
+      const base64Data = encodedOfferStr.replace('INSTASEND_OFFLINE_OFFER:', '');
+      const parsed = JSON.parse(atob(base64Data));
+      offerSdp = parsed.sdp;
+      filesMeta = parsed.filesMeta || [];
+    } else {
+      offerSdp = encodedOfferStr;
+    }
+
+    await this.pc.setRemoteDescription(new RTCSessionDescription({
+      type: 'offer',
+      sdp: offerSdp
+    }));
+
+    const answer = await this.pc.createAnswer();
+    await this.pc.setLocalDescription(answer);
+
+    await new Promise<void>((resolve) => {
+      if (this.pc?.iceGatheringState === 'complete') {
+        resolve();
+      } else {
+        const checkState = () => {
+          if (this.pc?.iceGatheringState === 'complete') {
+            this.pc.removeEventListener('icegatheringstatechange', checkState);
+            resolve();
+          }
+        };
+        this.pc?.addEventListener('icegatheringstatechange', checkState);
+        setTimeout(resolve, 1200);
+      }
+    });
+
+    const localAnswerDesc = this.pc.localDescription;
+    const rawAnswerSdp = localAnswerDesc ? localAnswerDesc.sdp : answer.sdp;
+
+    const compactAnswer = {
+      type: 'OFFLINE_ANSWER',
+      sdp: rawAnswerSdp
+    };
+
+    if (filesMeta.length > 0) {
+      this.events.onRoomJoined?.('OFFLINE', filesMeta);
+    }
+
+    return 'INSTASEND_OFFLINE_ANSWER:' + btoa(JSON.stringify(compactAnswer));
+  }
+
+  public async completeOfflineDirectHandshake(encodedAnswerStr: string): Promise<void> {
+    if (!this.pc) throw new Error('No active WebRTC session found');
+
+    let answerSdp = '';
+    if (encodedAnswerStr.startsWith('INSTASEND_OFFLINE_ANSWER:')) {
+      const base64Data = encodedAnswerStr.replace('INSTASEND_OFFLINE_ANSWER:', '');
+      const parsed = JSON.parse(atob(base64Data));
+      answerSdp = parsed.sdp;
+    } else {
+      answerSdp = encodedAnswerStr;
+    }
+
+    await this.pc.setRemoteDescription(new RTCSessionDescription({
+      type: 'answer',
+      sdp: answerSdp
+    }));
+
+    this.events.onStateChange?.('connecting_webrtc');
   }
 }

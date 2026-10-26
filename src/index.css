@@ -66,3 +66,17 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #bdc1c6;
 }
+
+/* Android TV D-Pad Remote Navigation Focus Ring */
+:focus-visible {
+  outline: 3px solid #1a73e8 !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 0 4px rgba(26, 115, 232, 0.3) !important;
+}
+
+/* TV & Touch Active States */
+button:focus-visible, a:focus-visible, input:focus-visible, [tabindex]:focus-visible {
+  transform: scale(1.02);
+  transition: transform 0.15s ease-out;
+}
+

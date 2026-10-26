@@ -21,7 +21,8 @@ import {
   AlertCircle,
   ArrowDown,
   Camera,
-  QrCode
+  QrCode,
+  Wifi
 } from 'lucide-react';
 import { FileItem, TransferMetrics, DeviceInfo, ChatMessage } from '../types.ts';
 import { formatBytes, formatDuration } from '../services/device.ts';
@@ -29,6 +30,7 @@ import { sound } from '../services/sound.ts';
 import { WebRTCManager } from '../services/webrtc.ts';
 import { QRCodeModal } from './QRCodeModal.tsx';
 import { SpeedChart } from './SpeedChart.tsx';
+import { SpeedGauge } from './SpeedGauge.tsx';
 
 interface ReceiveTabProps {
   webrtc: WebRTCManager | null;
@@ -42,6 +44,7 @@ interface ReceiveTabProps {
   onReset: () => void;
   initialCode?: string;
   errorMessage?: string | null;
+  onOpenOfflineModal?: () => void;
 }
 
 export const ReceiveTab: React.FC<ReceiveTabProps> = ({
@@ -55,7 +58,8 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
   onSendChat,
   onReset,
   initialCode = '',
-  errorMessage
+  errorMessage,
+  onOpenOfflineModal
 }) => {
   const [inputCode, setInputCode] = useState(initialCode.toUpperCase());
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
@@ -295,6 +299,16 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
               <Camera className="w-4 h-4 text-[#1a73e8]" />
               <span>Scan QR Code with Camera</span>
             </button>
+
+            {/* Serverless Offline Wi-Fi Mode CTA */}
+            <button
+              type="button"
+              onClick={() => onOpenOfflineModal?.()}
+              className="w-full py-2.5 px-4 rounded-full bg-emerald-50 hover:bg-emerald-100 text-[#137333] border border-[#ceead6] text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+            >
+              <Wifi className="w-4 h-4 text-[#34A853]" />
+              <span>Serverless Local Wi-Fi Mode (100% Offline)</span>
+            </button>
           </div>
         </form>
 
@@ -409,15 +423,27 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
               </div>
             </div>
 
-            {/* Recharts Live Mbps Speed Line Chart */}
-            <SpeedChart
-              speedBytesPerSec={metrics.speedBytesPerSec}
-              bytesTransferred={metrics.bytesTransferred}
-              totalBytes={metrics.totalBytes}
-              isActive={state === 'transferring'}
-              isCompleted={state === 'completed'}
-              speedType="download"
-            />
+            {/* Live Mbps Speedometer Gauge & Recharts Line Chart Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div className="md:col-span-2">
+                <SpeedGauge
+                  speedBytesPerSec={metrics.speedBytesPerSec}
+                  isActive={state === 'transferring'}
+                  isCompleted={state === 'completed'}
+                  speedType="download"
+                />
+              </div>
+              <div className="md:col-span-3">
+                <SpeedChart
+                  speedBytesPerSec={metrics.speedBytesPerSec}
+                  bytesTransferred={metrics.bytesTransferred}
+                  totalBytes={metrics.totalBytes}
+                  isActive={state === 'transferring'}
+                  isCompleted={state === 'completed'}
+                  speedType="download"
+                />
+              </div>
+            </div>
           </div>
         )}
       </div>

@@ -14,8 +14,33 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 const app = express();
 const server = http.createServer(app);
 
-// WebSocket Server for WebRTC signaling and presence
-const wss = new WebSocketServer({ server });
+// WebSocket Server for WebRTC signaling and presence (isolated from Vite HMR)
+const wss = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (request, socket, head) => {
+  const protocol = request.headers['sec-websocket-protocol'];
+  // Do not intercept or interfere with Vite HMR WebSockets
+  if (protocol === 'vite-hmr') {
+    socket.destroy();
+    return;
+  }
+
+  try {
+    const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+    const pathname = url.pathname;
+
+    // Accept signaling connections on /ws or root /
+    if (pathname === '/ws' || pathname === '/' || pathname === '/signaling') {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    } else {
+      socket.destroy();
+    }
+  } catch {
+    socket.destroy();
+  }
+});
 
 interface Peer {
   id: string;
@@ -459,7 +484,8 @@ async function startServer() {
       server: {
         middlewareMode: true,
         host: '0.0.0.0',
-        port: PORT
+        port: PORT,
+        hmr: process.env.ENABLE_HMR === 'true' ? true : false
       },
       appType: 'spa'
     });

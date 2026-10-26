@@ -8,10 +8,12 @@ InstaSend is a modern, privacy-first web application for transferring files, fol
 ## 🚀 Key Features
 
 * **True Peer-to-Peer (P2P)**: Data streams directly from the sender's browser memory to the receiver's browser memory via encrypted WebRTC DataChannels.
+* **Visual Sending Queue & Drag-and-Drop Staging**: Drag and drop individual files and folders into an interactive preview queue before initiating transfer. Includes image thumbnails, hover zoom, full-screen lightbox preview modals, pre-flight DTLS 1.2 readiness indicators, queue clearing, and single-item removal.
 * **Zero Cloud Storage**: Files never touch any backend server, third-party database, or storage bucket.
 * **HexaSend-Style 6-Character Codes**: Sender generates a friendly 6-character session code (e.g. `WORK88`, `HEX729`); receiver types it into 6 discrete input blocks to connect instantly.
 * **Instant QR Code Sharing**: Built-in QR code generation allows seamless desktop-to-mobile or mobile-to-desktop handoffs with phone cameras.
 * **Direct Clickable Links**: One-click share URLs (`https://<app-url>/?code=XYZ123`) that automatically populate the receiver's session and initiate handshake.
+* **Audio Notification Feedback**: Subtle 'ping' sound on transfer commencement, 4-note victory chime on completion, and alert tone on transfer errors.
 * **Live Speed Meters**:
   * **Sender's System**: Live real-time **Upload Speed** (exponentially smoothed MB/s / KB/s), elapsed time, chunk packets sent, and ETA countdown.
   * **Receiver's System**: Live real-time **Download Speed**, incoming byte counter, and interactive progress bars.
@@ -270,5 +272,17 @@ instasend/
 
 ---
 
+## 📚 Technical Documentation & Guides
+
+Comprehensive technical guides are available in the [`/docs`](./docs) directory:
+
+- 🛡️ **[Security Architecture, Testing & Verification Guide (docs/SecurityTestingAndVerification.md)](./docs/SecurityTestingAndVerification.md)**: Zero-cloud storage model, WebRTC DTLS 1.2 encryption, bit-for-bit SHA-256 hash verification, scrypt password hashing, CSP/XSS testing, Play Store security compliance, and step-by-step security audit test cases.
+- 🧪 **[Complete Features & QA Verification Guide (docs/FeaturesAndQAVerification.md)](./docs/FeaturesAndQAVerification.md)**: Product feature matrix, build instructions, step-by-step QA test case suite (TC-01 to TC-08), and release verification checklist.
+- 📖 **[Server & Database Setup Guide (docs/ServerSetup.md)](./docs/ServerSetup.md)**: Runtime dependencies, SQLite database initialization, `/admin` portal configuration (`admin` / `1@3$5^7*9`), pre-seeded test accounts (`admin_and_test_users.sql`), active peer telemetry, and production systemd/Nginx deployment.
+- 📱 **[Android Mobile & TV Build Guide (docs/AndroidBuildGuide.md)](./docs/AndroidBuildGuide.md)**: Step-by-step guidelines to compile, build, sign, and test native Android APKs for mobile phones, tablets, and Android TV / Google TV devices, including 100% offline serverless Wi-Fi mode.
+
+---
+
 ## 📄 License
 This project is licensed under the Apache 2.0 License.
+

@@ -21,6 +21,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { Header } from './components/Header.tsx';
+import { PaperPlaneLogo } from './components/PaperPlaneLogo.tsx';
 import { SendTab } from './components/SendTab.tsx';
 import { ReceiveTab } from './components/ReceiveTab.tsx';
 import { FileManager } from './components/FileManager.tsx';
@@ -28,6 +29,9 @@ import { AuthModal } from './components/AuthModal.tsx';
 import { RadarModal } from './components/RadarModal.tsx';
 import { HistoryModal } from './components/HistoryModal.tsx';
 import { SecurityModal } from './components/SecurityModal.tsx';
+import { OfflineDirectModal } from './components/OfflineDirectModal.tsx';
+import { SplashScreen } from './components/SplashScreen.tsx';
+import { FooterFeatureBubble, FeatureNote } from './components/FooterFeatureBubble.tsx';
 import { AdminPortal } from './components/AdminPortal.tsx';
 import { WebRTCManager } from './services/webrtc.ts';
 import { getLocalDeviceInfo, formatBytes } from './services/device.ts';
@@ -44,7 +48,7 @@ import {
 
 export default function App() {
   const [activeView, setActiveView] = useState<'transfer' | 'files' | 'admin'>('transfer');
-  const [activeTab, setActiveTab] = useState<'send' | 'receive'>('send');
+  const [activeTab, setActiveTab] = useState<'send' | 'receive' | 'securenote'>('send');
   const [deviceInfo, setDeviceInfo] = useState<DeviceInfo>(getLocalDeviceInfo());
   const [sessionState, setSessionState] = useState<string>('idle');
   const [roomCode, setRoomCode] = useState<string | null>(null);
@@ -80,6 +84,106 @@ export default function App() {
   const [isRadarOpen, setIsRadarOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isSecurityOpen, setIsSecurityOpen] = useState(false);
+  const [isOfflineModalOpen, setIsOfflineModalOpen] = useState(false);
+  const [offlineModalMode, setOfflineModalMode] = useState<'send' | 'receive'>('send');
+  const [stagedFiles, setStagedFiles] = useState<FileItem[]>([]);
+  const [activeFeatureNote, setActiveFeatureNote] = useState<FeatureNote | null>(null);
+
+  const openFeatureNote = (featureKey: string) => {
+    switch (featureKey) {
+      case 'security':
+        setActiveFeatureNote({
+          id: 'security',
+          title: 'End-to-End Security Architecture',
+          category: 'Security & Encryption',
+          badge: 'DTLS 1.2 / SCTP',
+          summary: 'All file streams and messages are encrypted using DTLS 1.2 with AES-GCM ciphers negotiated directly between client peers via ephemeral Diffie-Hellman keys.',
+          howToAccess: 'Click "Security" in the footer or navigation menu, or click the lock badge during active transfers.',
+          howToVerify: 'Open chrome://webrtc-internals during an active transfer session in Chrome and inspect dtlsState: connected and the active TLS_ECDHE_ECDSA_WITH_AES_128_GCM cipher suite.',
+          actionText: 'View Security Specs',
+          actionHandler: () => setIsSecurityOpen(true)
+        });
+        break;
+      case 'radar':
+        setActiveFeatureNote({
+          id: 'radar',
+          title: 'Local Mesh Peer Discovery Radar',
+          category: 'Network Discovery',
+          badge: 'Auto LAN Mesh',
+          summary: 'Discovers active devices connected to the same local network or signaling mesh, allowing instant 1-tap file sharing without typing 6-character codes.',
+          howToAccess: 'Click "Radar" in the footer or top right active peer indicator pill.',
+          howToVerify: 'Open InstaSend on two devices connected to the same Wi-Fi network; open Radar on device A to see device B listed, then click to send a 1-tap direct invite.',
+          actionText: 'Open Peer Radar',
+          actionHandler: () => setIsRadarOpen(true)
+        });
+        break;
+      case 'files':
+        setActiveFeatureNote({
+          id: 'files',
+          title: 'File Manager & Local Storage Hub',
+          category: 'Data Dashboard',
+          badge: 'IndexedDB / Storage',
+          summary: 'Keeps track of all staged, uploaded, and received files with storage usage meters, in-browser image/text previews, and direct re-sharing.',
+          howToAccess: 'Click "Files" in the footer or top navigation menu.',
+          howToVerify: 'Stage or receive any file, switch to the "My Files" view, and test downloading, previewing, or re-sharing the file in a new session.',
+          actionText: 'Open My Files',
+          actionHandler: () => setActiveView('files')
+        });
+        break;
+      case 'history':
+        setActiveFeatureNote({
+          id: 'history',
+          title: 'Transfer History & SHA-256 Hashes',
+          category: 'Integrity Logs',
+          badge: 'SHA-256 Web Crypto',
+          summary: 'Maintains audit logs of completed transfers with bit-for-bit SHA-256 cryptographic digests computed directly via Web Crypto API.',
+          howToAccess: 'Click "History" in the footer or drawer menu.',
+          howToVerify: 'Receive a file, open History, and compare the displayed SHA-256 hash string against "shasum -a 256 <file>" executed on your local terminal.',
+          actionText: 'View Transfer History',
+          actionHandler: () => setIsHistoryOpen(true)
+        });
+        break;
+      case 'admin':
+        setActiveFeatureNote({
+          id: 'admin',
+          title: 'System Telemetry & Admin Console',
+          category: 'Administration',
+          badge: 'Node.js / SQLite',
+          summary: 'Full administrative portal showing real-time Node.js process RSS memory, SQLite database stats, active LAN peers, user management, and pre-seeded SQL scripts.',
+          howToAccess: 'Click "Admin Portal (/admin)" in footer or visit http://localhost:3000/admin (Credentials: admin / 1@3$5^7*9).',
+          howToVerify: 'Sign in to /admin to inspect live server RSS memory, active peer tables, and database user accounts.',
+          actionText: 'Open Admin Portal (/admin)',
+          actionHandler: () => setActiveView('admin')
+        });
+        break;
+      case 'zerocloud':
+        setActiveFeatureNote({
+          id: 'zerocloud',
+          title: 'Zero Cloud Storage Guarantee',
+          category: 'Privacy Architecture',
+          badge: '100% RAM-to-RAM',
+          summary: 'Files stream directly browser-to-browser. The backend server acts only as a signaling relay for SDP offers/answers. Zero binary file payload bytes touch disk or cloud databases.',
+          howToAccess: 'Operates automatically on every file transfer session.',
+          howToVerify: 'Transfer a multi-gigabyte file, then inspect server disk storage (data/ directory) or server network logs — zero file data is ever stored on the server.',
+          actionText: 'View Privacy Specs',
+          actionHandler: () => setIsSecurityOpen(true)
+        });
+        break;
+      case 'dtls':
+        setActiveFeatureNote({
+          id: 'dtls',
+          title: 'DTLS 1.2 Protocol Encryption',
+          category: 'Transport Security',
+          badge: 'AES-128-GCM / 256',
+          summary: 'Mandatory Datagram Transport Layer Security (DTLS 1.2) layer wrapping all WebRTC binary data channels, preventing eavesdropping and tampering.',
+          howToAccess: 'View green DTLS 1.2 indicator badge in footer or Security modal.',
+          howToVerify: 'Inspect active WebRTC DataChannel security properties in Chrome DevTools to confirm encrypted SCTP over DTLS transport.',
+          actionText: 'View Encryption Details',
+          actionHandler: () => setIsSecurityOpen(true)
+        });
+        break;
+    }
+  };
   const [history, setHistory] = useState<HistoryRecord[]>(() => {
     try {
       const saved = localStorage.getItem('instasend_history') || localStorage.getItem('hexasend_history');
@@ -115,6 +219,7 @@ export default function App() {
 
   // Add files to manager when staged or sent
   const handleFilesStaged = (staged: FileItem[]) => {
+    setStagedFiles(staged);
     if (staged.length === 0) return;
     const now = Date.now();
     const newManaged: ManagedFile[] = staged.map(f => ({
@@ -426,8 +531,17 @@ export default function App() {
     }
   };
 
+  const handleGoHome = () => {
+    setActiveView('transfer');
+    setActiveTab('send');
+    window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+  };
+
   return (
     <div className="min-h-screen bg-white text-[#202124] flex flex-col justify-between selection:bg-blue-100 selection:text-blue-900">
+      {/* PWA Splash Screen Sequence */}
+      <SplashScreen />
+
       {/* Google Homepage Style Header */}
       <Header
         deviceInfo={deviceInfo}
@@ -441,11 +555,12 @@ export default function App() {
         onOpenAuth={() => setIsAuthOpen(true)}
         activeView={activeView}
         onViewChange={(v) => setActiveView(v)}
+        onGoHome={handleGoHome}
         managedFilesCount={managedFiles.length}
       />
 
       {/* Main Google Homepage Center Stage */}
-      <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-6 sm:py-10 flex flex-col justify-center">
+      <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-4 sm:py-6 flex flex-col justify-start">
         {/* Incoming Direct Transfer Alert */}
         {incomingInvite && (
           <div className="mb-6 p-4 rounded-2xl bg-white border border-[#ceead6] shadow-md flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in">
@@ -480,31 +595,10 @@ export default function App() {
           </div>
         )}
 
-        {/* Google Homepage Centerpiece Logo & Subtitle */}
-        {activeView === 'transfer' && sessionState === 'idle' && (
-          <div className="text-center mb-6 sm:mb-8 space-y-2">
-            {/* Iconic Google 4-Color Title */}
-            <h1 className="text-5xl sm:text-7xl font-normal tracking-tight select-none">
-              <span className="text-[#4285F4]">I</span>
-              <span className="text-[#EA4335]">n</span>
-              <span className="text-[#FBBC05]">s</span>
-              <span className="text-[#4285F4]">t</span>
-              <span className="text-[#34A853]">a</span>
-              <span className="text-[#EA4335]">S</span>
-              <span className="text-[#FBBC05]">e</span>
-              <span className="text-[#4285F4]">n</span>
-              <span className="text-[#34A853]">d</span>
-            </h1>
-            <p className="text-sm text-[#5f6368] font-normal">
-              Direct, encrypted peer-to-peer file transfer via WebRTC
-            </p>
-          </div>
-        )}
-
         {/* TRANSFER VIEW */}
         {activeView === 'transfer' ? (
           <div className="space-y-6">
-            {/* Google Style Action Switcher Pill */}
+            {/* Send / Receive / SecureNote Action Switcher Pill */}
             <div className="flex justify-center">
               <div className="inline-flex p-1 rounded-full bg-[#f8f9fa] border border-[#dadce0] google-card-shadow">
                 <button
@@ -512,14 +606,14 @@ export default function App() {
                     if (sessionState === 'idle') setActiveTab('send');
                   }}
                   disabled={sessionState !== 'idle' && activeTab !== 'send'}
-                  className={`flex items-center gap-2 px-6 py-2 rounded-full text-xs sm:text-sm font-medium transition-all cursor-pointer ${
+                  className={`flex items-center gap-1.5 sm:gap-2 px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-medium transition-all cursor-pointer ${
                     activeTab === 'send'
                       ? 'bg-white text-[#1a73e8] shadow-xs font-semibold'
                       : 'text-[#5f6368] hover:text-[#202124]'
                   }`}
                 >
-                  <SendIcon className="w-3.5 h-3.5" />
-                  <span>Send Files</span>
+                  <SendIcon className="w-4 h-4" />
+                  <span>Send</span>
                 </button>
 
                 <button
@@ -527,21 +621,36 @@ export default function App() {
                     if (sessionState === 'idle') setActiveTab('receive');
                   }}
                   disabled={sessionState !== 'idle' && activeTab !== 'receive'}
-                  className={`flex items-center gap-2 px-6 py-2 rounded-full text-xs sm:text-sm font-medium transition-all cursor-pointer ${
+                  className={`flex items-center gap-1.5 sm:gap-2 px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-medium transition-all cursor-pointer ${
                     activeTab === 'receive'
                       ? 'bg-white text-[#1a73e8] shadow-xs font-semibold'
                       : 'text-[#5f6368] hover:text-[#202124]'
                   }`}
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Receive Files</span>
+                  <Download className="w-4 h-4" />
+                  <span>Receive</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (sessionState === 'idle') setActiveTab('securenote');
+                  }}
+                  disabled={sessionState !== 'idle' && activeTab !== 'securenote'}
+                  className={`flex items-center gap-1.5 sm:gap-2 px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-medium transition-all cursor-pointer ${
+                    activeTab === 'securenote'
+                      ? 'bg-white text-[#1a73e8] shadow-xs font-semibold'
+                      : 'text-[#5f6368] hover:text-[#202124]'
+                  }`}
+                >
+                  <Lock className="w-4 h-4 text-[#EA4335]" />
+                  <span>SecureNote</span>
                 </button>
               </div>
             </div>
 
             {/* Active Tab Component */}
             <div className="pt-1">
-              {activeTab === 'send' ? (
+              {activeTab === 'send' || activeTab === 'securenote' ? (
                 <SendTab
                   webrtc={webrtcRef.current}
                   state={sessionState}
@@ -554,6 +663,11 @@ export default function App() {
                   onFilesStaged={handleFilesStaged}
                   radarPeers={radarPeers}
                   onSelectRadarPeer={handleSelectRadarPeer}
+                  onOpenOfflineModal={() => {
+                    setOfflineModalMode('send');
+                    setIsOfflineModalOpen(true);
+                  }}
+                  mode={activeTab === 'securenote' ? 'text' : 'files'}
                 />
               ) : (
                 <ReceiveTab
@@ -568,6 +682,10 @@ export default function App() {
                   onReset={handleResetSession}
                   initialCode={urlCode}
                   errorMessage={errorMessage}
+                  onOpenOfflineModal={() => {
+                    setOfflineModalMode('receive');
+                    setIsOfflineModalOpen(true);
+                  }}
                 />
               )}
             </div>
@@ -605,39 +723,83 @@ export default function App() {
             <span className="w-2 h-2 rounded-full bg-[#34A853]" />
             <span>Local Mesh Network • Direct WebRTC Peer-to-Peer</span>
           </div>
-          <span className="hidden sm:inline font-mono text-[11px]">
-            RAM-to-RAM DataChannel
-          </span>
+          <button
+            onClick={() => openFeatureNote('zerocloud')}
+            className="hidden sm:flex items-center gap-1 font-mono text-[11px] hover:text-[#202124] transition-colors cursor-pointer"
+            title="Click to view Zero Cloud Storage verification notes"
+          >
+            <span>RAM-to-RAM DataChannel</span>
+            <Info className="w-3 h-3 text-[#1a73e8]" />
+          </button>
         </div>
 
-        {/* Tier 2: Google Style Links */}
+        {/* Tier 2: Google Style Links with Pop-Up Feature Notes */}
         <div className="px-6 py-3.5 flex flex-wrap items-center justify-between gap-y-2 max-w-7xl mx-auto text-xs">
-          <div className="flex items-center gap-4 sm:gap-6">
-            <button onClick={() => setIsSecurityOpen(true)} className="hover:text-[#202124] transition-colors">
-              Security
-            </button>
-            <button onClick={() => setIsRadarOpen(true)} className="hover:text-[#202124] transition-colors">
-              Radar
-            </button>
-            <button onClick={() => setActiveView('files')} className="hover:text-[#202124] transition-colors">
-              Files ({managedFiles.length})
-            </button>
-            <button onClick={() => setIsHistoryOpen(true)} className="hover:text-[#202124] transition-colors">
-              History
-            </button>
-            <button onClick={() => setActiveView('admin')} className="text-[#1a73e8] hover:underline transition-colors font-medium">
-              Admin Portal (/admin)
-            </button>
+          <div className="flex flex-wrap items-center gap-3 sm:gap-5">
+            <div className="inline-flex items-center gap-1">
+              <button onClick={() => setIsSecurityOpen(true)} className="hover:text-[#202124] transition-colors cursor-pointer">
+                Security
+              </button>
+              <button onClick={() => openFeatureNote('security')} className="p-0.5 text-[#1a73e8] hover:scale-110 transition-transform cursor-pointer" title="Security verification note">
+                <Info className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="inline-flex items-center gap-1">
+              <button onClick={() => setIsRadarOpen(true)} className="hover:text-[#202124] transition-colors cursor-pointer">
+                Radar
+              </button>
+              <button onClick={() => openFeatureNote('radar')} className="p-0.5 text-[#1a73e8] hover:scale-110 transition-transform cursor-pointer" title="Radar verification note">
+                <Info className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="inline-flex items-center gap-1">
+              <button onClick={() => setActiveView('files')} className="hover:text-[#202124] transition-colors cursor-pointer">
+                Files ({managedFiles.length})
+              </button>
+              <button onClick={() => openFeatureNote('files')} className="p-0.5 text-[#1a73e8] hover:scale-110 transition-transform cursor-pointer" title="File manager verification note">
+                <Info className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="inline-flex items-center gap-1">
+              <button onClick={() => setIsHistoryOpen(true)} className="hover:text-[#202124] transition-colors cursor-pointer">
+                History
+              </button>
+              <button onClick={() => openFeatureNote('history')} className="p-0.5 text-[#1a73e8] hover:scale-110 transition-transform cursor-pointer" title="SHA-256 history verification note">
+                <Info className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="inline-flex items-center gap-1">
+              <button onClick={() => setActiveView('admin')} className="text-[#1a73e8] hover:underline transition-colors font-medium cursor-pointer">
+                Admin Portal (/admin)
+              </button>
+              <button onClick={() => openFeatureNote('admin')} className="p-0.5 text-[#1a73e8] hover:scale-110 transition-transform cursor-pointer" title="Admin portal verification note">
+                <Info className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
-          <div className="flex items-center gap-4 sm:gap-6">
-            <span className="flex items-center gap-1 text-[#137333]">
+          <div className="flex flex-wrap items-center gap-3 sm:gap-5">
+            <button
+              onClick={() => openFeatureNote('dtls')}
+              className="flex items-center gap-1 text-[#137333] hover:underline cursor-pointer"
+              title="Click to view DTLS 1.2 encryption notes"
+            >
               <ShieldCheck className="w-3.5 h-3.5" /> DTLS 1.2
-            </span>
-            <span className="hover:text-[#202124] transition-colors">
+            </button>
+
+            <button
+              onClick={() => openFeatureNote('zerocloud')}
+              className="hover:text-[#202124] transition-colors cursor-pointer"
+              title="Click to view Zero Cloud Storage notes"
+            >
               Zero Cloud Storage
-            </span>
-            <button onClick={() => setIsSecurityOpen(true)} className="hover:text-[#202124] transition-colors">
+            </button>
+
+            <button onClick={() => setIsSecurityOpen(true)} className="hover:text-[#202124] transition-colors cursor-pointer">
               Privacy & Guarantee
             </button>
           </div>
@@ -671,6 +833,20 @@ export default function App() {
       <SecurityModal
         isOpen={isSecurityOpen}
         onClose={() => setIsSecurityOpen(false)}
+      />
+
+      <OfflineDirectModal
+        isOpen={isOfflineModalOpen}
+        onClose={() => setIsOfflineModalOpen(false)}
+        webrtc={webrtcRef.current}
+        mode={offlineModalMode}
+        stagedFiles={stagedFiles}
+      />
+
+      {/* Pop-up Feature Notes Bubble */}
+      <FooterFeatureBubble
+        note={activeFeatureNote}
+        onClose={() => setActiveFeatureNote(null)}
       />
     </div>
   );
