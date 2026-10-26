@@ -19,6 +19,19 @@
           event.stopPropagation?.();
         }
       }, true);
+
+      // Pre-hydration dark theme initial detection to prevent flashing
+      try {
+        var theme = localStorage.getItem('instasend_theme') || 'system';
+        var isDark = theme === 'dark' || (theme === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (isDark) {
+          document.documentElement.classList.add('dark');
+          document.documentElement.style.colorScheme = 'dark';
+        } else {
+          document.documentElement.classList.remove('dark');
+          document.documentElement.style.colorScheme = 'light';
+        }
+      } catch (e) {}
     </script>
     <title>InstaSend — Secure Peer-to-Peer File Transfer via WebRTC</title>
     <meta name="description" content="InstaSend: Blazing-fast, end-to-end encrypted peer-to-peer file and data sharing directly between devices using WebRTC." />

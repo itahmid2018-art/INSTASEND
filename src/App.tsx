@@ -538,7 +538,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-white text-[#202124] flex flex-col justify-between selection:bg-blue-100 selection:text-blue-900">
+    <div className="min-h-screen bg-white dark:bg-[#121212] text-[#202124] dark:text-[#e8eaed] flex flex-col justify-between selection:bg-blue-100 dark:selection:bg-blue-900/60 selection:text-blue-900 dark:selection:text-blue-200 transition-colors duration-200">
       {/* PWA Splash Screen Sequence */}
       <SplashScreen />
 
@@ -563,16 +563,16 @@ export default function App() {
       <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-4 sm:py-6 flex flex-col justify-start">
         {/* Incoming Direct Transfer Alert */}
         {incomingInvite && (
-          <div className="mb-6 p-4 rounded-2xl bg-white border border-[#ceead6] shadow-md flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in">
+          <div className="mb-6 p-4 rounded-2xl bg-white dark:bg-[#202124] border border-[#ceead6] dark:border-green-900/60 shadow-md flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-green-50 text-[#34A853] flex items-center justify-center shrink-0">
+              <div className="w-10 h-10 rounded-full bg-green-50 dark:bg-green-950/40 text-[#34A853] dark:text-[#81c995] flex items-center justify-center shrink-0">
                 <Radio className="w-5 h-5 animate-pulse" />
               </div>
               <div>
-                <h4 className="text-xs sm:text-sm font-bold text-[#202124]">
+                <h4 className="text-xs sm:text-sm font-bold text-[#202124] dark:text-[#e8eaed]">
                   Direct Transfer Request
                 </h4>
-                <p className="text-xs text-[#5f6368]">
+                <p className="text-xs text-[#5f6368] dark:text-[#9aa0a6]">
                   <strong>{incomingInvite.fromDeviceInfo?.name || 'A nearby device'}</strong> wants to share{' '}
                   {incomingInvite.filesMeta?.length || 1} file(s) with you.
                 </p>
@@ -587,7 +587,7 @@ export default function App() {
               </button>
               <button
                 onClick={declineIncomingInvite}
-                className="px-3.5 py-2 rounded-full bg-[#f8f9fa] hover:bg-[#f1f3f4] text-[#3c4043] border border-[#dadce0] text-xs transition-colors cursor-pointer"
+                className="px-3.5 py-2 rounded-full bg-[#f8f9fa] dark:bg-[#2d2f31] hover:bg-[#f1f3f4] dark:hover:bg-[#3c4043] text-[#3c4043] dark:text-[#e8eaed] border border-[#dadce0] dark:border-[#3c4043] text-xs transition-colors cursor-pointer"
               >
                 Decline
               </button>
@@ -600,7 +600,7 @@ export default function App() {
           <div className="space-y-6">
             {/* Send / Receive / SecureNote Action Switcher Pill */}
             <div className="flex justify-center">
-              <div className="inline-flex p-1 rounded-full bg-[#f8f9fa] border border-[#dadce0] google-card-shadow">
+              <div className="inline-flex p-1 rounded-full bg-[#f8f9fa] dark:bg-[#202124] border border-[#dadce0] dark:border-[#3c4043] google-card-shadow">
                 <button
                   onClick={() => {
                     if (sessionState === 'idle') setActiveTab('send');
@@ -608,8 +608,8 @@ export default function App() {
                   disabled={sessionState !== 'idle' && activeTab !== 'send'}
                   className={`flex items-center gap-1.5 sm:gap-2 px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-medium transition-all cursor-pointer ${
                     activeTab === 'send'
-                      ? 'bg-white text-[#1a73e8] shadow-xs font-semibold'
-                      : 'text-[#5f6368] hover:text-[#202124]'
+                      ? 'bg-white dark:bg-[#303134] text-[#1a73e8] dark:text-[#8ab4f8] shadow-xs font-semibold'
+                      : 'text-[#5f6368] dark:text-[#9aa0a6] hover:text-[#202124] dark:hover:text-[#e8eaed]'
                   }`}
                 >
                   <SendIcon className="w-4 h-4" />
@@ -623,8 +623,8 @@ export default function App() {
                   disabled={sessionState !== 'idle' && activeTab !== 'receive'}
                   className={`flex items-center gap-1.5 sm:gap-2 px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-medium transition-all cursor-pointer ${
                     activeTab === 'receive'
-                      ? 'bg-white text-[#1a73e8] shadow-xs font-semibold'
-                      : 'text-[#5f6368] hover:text-[#202124]'
+                      ? 'bg-white dark:bg-[#303134] text-[#1a73e8] dark:text-[#8ab4f8] shadow-xs font-semibold'
+                      : 'text-[#5f6368] dark:text-[#9aa0a6] hover:text-[#202124] dark:hover:text-[#e8eaed]'
                   }`}
                 >
                   <Download className="w-4 h-4" />
@@ -638,8 +638,8 @@ export default function App() {
                   disabled={sessionState !== 'idle' && activeTab !== 'securenote'}
                   className={`flex items-center gap-1.5 sm:gap-2 px-4 sm:px-6 py-2 rounded-full text-xs sm:text-sm font-medium transition-all cursor-pointer ${
                     activeTab === 'securenote'
-                      ? 'bg-white text-[#1a73e8] shadow-xs font-semibold'
-                      : 'text-[#5f6368] hover:text-[#202124]'
+                      ? 'bg-white dark:bg-[#303134] text-[#1a73e8] dark:text-[#8ab4f8] shadow-xs font-semibold'
+                      : 'text-[#5f6368] dark:text-[#9aa0a6] hover:text-[#202124] dark:hover:text-[#e8eaed]'
                   }`}
                 >
                   <Lock className="w-4 h-4 text-[#EA4335]" />
@@ -716,20 +716,20 @@ export default function App() {
       </main>
 
       {/* Google Homepage Signature 2-Tier Footer */}
-      <footer className="bg-[#f2f2f2] text-[#70757a] text-[13px] border-t border-[#dadce0] mt-12 select-none">
+      <footer className="bg-[#f2f2f2] dark:bg-[#171717] text-[#70757a] dark:text-[#9aa0a6] text-[13px] border-t border-[#dadce0] dark:border-[#303134] mt-12 select-none transition-colors duration-200">
         {/* Tier 1: Network & Region Status */}
-        <div className="px-6 py-3 border-b border-[#dadce0] flex items-center justify-between text-xs max-w-7xl mx-auto">
+        <div className="px-6 py-3 border-b border-[#dadce0] dark:border-[#303134] flex items-center justify-between text-xs max-w-7xl mx-auto">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-[#34A853]" />
             <span>Local Mesh Network • Direct WebRTC Peer-to-Peer</span>
           </div>
           <button
             onClick={() => openFeatureNote('zerocloud')}
-            className="hidden sm:flex items-center gap-1 font-mono text-[11px] hover:text-[#202124] transition-colors cursor-pointer"
+            className="hidden sm:flex items-center gap-1 font-mono text-[11px] hover:text-[#202124] dark:hover:text-[#e8eaed] transition-colors cursor-pointer"
             title="Click to view Zero Cloud Storage verification notes"
           >
             <span>RAM-to-RAM DataChannel</span>
-            <Info className="w-3 h-3 text-[#1a73e8]" />
+            <Info className="w-3 h-3 text-[#1a73e8] dark:text-[#8ab4f8]" />
           </button>
         </div>
 
@@ -737,46 +737,46 @@ export default function App() {
         <div className="px-6 py-3.5 flex flex-wrap items-center justify-between gap-y-2 max-w-7xl mx-auto text-xs">
           <div className="flex flex-wrap items-center gap-3 sm:gap-5">
             <div className="inline-flex items-center gap-1">
-              <button onClick={() => setIsSecurityOpen(true)} className="hover:text-[#202124] transition-colors cursor-pointer">
+              <button onClick={() => setIsSecurityOpen(true)} className="hover:text-[#202124] dark:hover:text-[#e8eaed] transition-colors cursor-pointer">
                 Security
               </button>
-              <button onClick={() => openFeatureNote('security')} className="p-0.5 text-[#1a73e8] hover:scale-110 transition-transform cursor-pointer" title="Security verification note">
+              <button onClick={() => openFeatureNote('security')} className="p-0.5 text-[#1a73e8] dark:text-[#8ab4f8] hover:scale-110 transition-transform cursor-pointer" title="Security verification note">
                 <Info className="w-3.5 h-3.5" />
               </button>
             </div>
 
             <div className="inline-flex items-center gap-1">
-              <button onClick={() => setIsRadarOpen(true)} className="hover:text-[#202124] transition-colors cursor-pointer">
+              <button onClick={() => setIsRadarOpen(true)} className="hover:text-[#202124] dark:hover:text-[#e8eaed] transition-colors cursor-pointer">
                 Radar
               </button>
-              <button onClick={() => openFeatureNote('radar')} className="p-0.5 text-[#1a73e8] hover:scale-110 transition-transform cursor-pointer" title="Radar verification note">
+              <button onClick={() => openFeatureNote('radar')} className="p-0.5 text-[#1a73e8] dark:text-[#8ab4f8] hover:scale-110 transition-transform cursor-pointer" title="Radar verification note">
                 <Info className="w-3.5 h-3.5" />
               </button>
             </div>
 
             <div className="inline-flex items-center gap-1">
-              <button onClick={() => setActiveView('files')} className="hover:text-[#202124] transition-colors cursor-pointer">
+              <button onClick={() => setActiveView('files')} className="hover:text-[#202124] dark:hover:text-[#e8eaed] transition-colors cursor-pointer">
                 Files ({managedFiles.length})
               </button>
-              <button onClick={() => openFeatureNote('files')} className="p-0.5 text-[#1a73e8] hover:scale-110 transition-transform cursor-pointer" title="File manager verification note">
+              <button onClick={() => openFeatureNote('files')} className="p-0.5 text-[#1a73e8] dark:text-[#8ab4f8] hover:scale-110 transition-transform cursor-pointer" title="File manager verification note">
                 <Info className="w-3.5 h-3.5" />
               </button>
             </div>
 
             <div className="inline-flex items-center gap-1">
-              <button onClick={() => setIsHistoryOpen(true)} className="hover:text-[#202124] transition-colors cursor-pointer">
+              <button onClick={() => setIsHistoryOpen(true)} className="hover:text-[#202124] dark:hover:text-[#e8eaed] transition-colors cursor-pointer">
                 History
               </button>
-              <button onClick={() => openFeatureNote('history')} className="p-0.5 text-[#1a73e8] hover:scale-110 transition-transform cursor-pointer" title="SHA-256 history verification note">
+              <button onClick={() => openFeatureNote('history')} className="p-0.5 text-[#1a73e8] dark:text-[#8ab4f8] hover:scale-110 transition-transform cursor-pointer" title="SHA-256 history verification note">
                 <Info className="w-3.5 h-3.5" />
               </button>
             </div>
 
             <div className="inline-flex items-center gap-1">
-              <button onClick={() => setActiveView('admin')} className="text-[#1a73e8] hover:underline transition-colors font-medium cursor-pointer">
+              <button onClick={() => setActiveView('admin')} className="text-[#1a73e8] dark:text-[#8ab4f8] hover:underline transition-colors font-medium cursor-pointer">
                 Admin Portal (/admin)
               </button>
-              <button onClick={() => openFeatureNote('admin')} className="p-0.5 text-[#1a73e8] hover:scale-110 transition-transform cursor-pointer" title="Admin portal verification note">
+              <button onClick={() => openFeatureNote('admin')} className="p-0.5 text-[#1a73e8] dark:text-[#8ab4f8] hover:scale-110 transition-transform cursor-pointer" title="Admin portal verification note">
                 <Info className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -785,7 +785,7 @@ export default function App() {
           <div className="flex flex-wrap items-center gap-3 sm:gap-5">
             <button
               onClick={() => openFeatureNote('dtls')}
-              className="flex items-center gap-1 text-[#137333] hover:underline cursor-pointer"
+              className="flex items-center gap-1 text-[#137333] dark:text-[#81c995] hover:underline cursor-pointer"
               title="Click to view DTLS 1.2 encryption notes"
             >
               <ShieldCheck className="w-3.5 h-3.5" /> DTLS 1.2
@@ -793,13 +793,13 @@ export default function App() {
 
             <button
               onClick={() => openFeatureNote('zerocloud')}
-              className="hover:text-[#202124] transition-colors cursor-pointer"
+              className="hover:text-[#202124] dark:hover:text-[#e8eaed] transition-colors cursor-pointer"
               title="Click to view Zero Cloud Storage notes"
             >
               Zero Cloud Storage
             </button>
 
-            <button onClick={() => setIsSecurityOpen(true)} className="hover:text-[#202124] transition-colors cursor-pointer">
+            <button onClick={() => setIsSecurityOpen(true)} className="hover:text-[#202124] dark:hover:text-[#e8eaed] transition-colors cursor-pointer">
               Privacy & Guarantee
             </button>
           </div>
