@@ -223,3 +223,24 @@ npm run cap:sync
 # View ADB logs during live testing
 adb logcat | grep "InstaSend"
 ```
+
+---
+
+## 10. Automated GitHub Actions CI/CD Build & Release
+
+InstaSend includes an automated **GitHub Actions CI/CD workflow** located at `.github/workflows/android-release.yml`. Every time code is committed and pushed to the repository branch (`main`, `master`, or `develop`), GitHub Actions automatically:
+
+1. **Sets up Node.js & JDK 17**: Configures the build environment with Node.js and Eclipse Temurin JDK 17 for Gradle.
+2. **Installs Dependencies & Builds Web App**: Installs `npm` modules and executes `npm run build` to compile the Vite React frontend.
+3. **Sets up Android SDK & Capacitor**: Configures Android build tools and syncs web assets with the Capacitor Android project shell (`npx cap sync android`).
+4. **Compiles Debug APK with Gradle**: Executes `./gradlew assembleDebug` in the `./android` directory to compile the native Android binary (`app-debug.apk`).
+5. **Generates Changelog & GitHub Release**: Extracts the 5 most recent commit messages as update notes and automatically creates a new GitHub Release tagged with a unique timestamp (`v1.0.<timestamp>`), attaching the compiled APK binary for instant downloading.
+
+### Triggering a Release Build:
+Simply commit and push your changes to `main`:
+```bash
+git add .
+git commit -m "feat: Add new offline transfer feature"
+git push origin main
+```
+Navigate to your GitHub repository's **Releases** tab to download the freshly compiled Android APK binary complete with commit change notes.
