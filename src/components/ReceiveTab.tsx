@@ -612,9 +612,24 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
               ))}
             </div>
 
-            <p className="text-[11px] text-[#70757a] text-center">
-              Paste code or URL directly into any box
-            </p>
+            {/* Clear / Reset Code option */}
+            <div className="flex items-center justify-between text-[11px] text-[#70757a]">
+              <span>Paste code or URL directly into any box</span>
+              {charBoxes.join('').length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCharBoxes(['', '', '', '', '', '']);
+                    setInputCode('');
+                    setStatusNotice(null);
+                    inputRefs.current[0]?.focus();
+                  }}
+                  className="text-[#d93025] hover:underline font-semibold cursor-pointer"
+                >
+                  Clear Code
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex flex-col gap-2">
@@ -739,6 +754,15 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
                 )}
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={onReset}
+              className="px-3 py-1.5 rounded-full bg-red-50 hover:bg-red-100 text-[#d93025] font-semibold text-xs flex items-center gap-1.5 border border-red-200 transition-all cursor-pointer shadow-2xs"
+              title="Leave session or enter a new code"
+            >
+              <span>Leave / New Code</span>
+            </button>
 
             <button
               onClick={() => setShowChat(!showChat)}

@@ -363,6 +363,44 @@ export class WebRTCManager {
     });
   }
 
+  // Refresh / Generate a new 6-character room code as Sender
+  public refreshRoomCode() {
+    this.cleanupPeerConnection();
+    const oldCode = this.roomCode;
+    this.roomCode = null;
+    this.logDiagnostic('room', 'info', `Refreshing session code... invalidating previous code ${oldCode || ''}`);
+    this.sendWs({
+      type: 'refresh-room',
+      oldRoomCode: oldCode,
+      filesMeta: this.filesToSend.map(f => ({
+        id: f.id,
+        name: f.name,
+        size: f.size,
+        type: f.type,
+        relativePath: f.relativePath
+      }))
+    });
+  }
+
+  // Stop transfer & close session code
+  public stopTransfer() {
+    const code = this.roomCode;
+    this.isTransferring = false;
+    this.isCancelled = true;
+    this.cleanupPeerConnection();
+    if (code) {
+      this.sendWs({
+        type: 'stop-transfer',
+        roomCode: code
+      });
+      this.logDiagnostic('room', 'warn', `Sender stopped transfer and closed session code ${code}`);
+    }
+    this.roomCode = null;
+    this.role = null;
+    this.roomValidity = null;
+    this.events.onStateChange?.('idle', 'Transfer stopped by user');
+  }
+
   // Join room as Receiver
   public joinRoom(roomCode: string) {
     this.role = 'receiver';

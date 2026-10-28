@@ -142,6 +142,13 @@ wss.on('connection', (ws: WebSocket) => {
 
       switch (message.type) {
         case 'ping': {
+          // Rolling TTL renewal for active rooms while sender stays connected
+          if (peer.roomCode) {
+            const room = rooms.get(peer.roomCode);
+            if (room && peer.role === 'sender') {
+              room.expiresAt = Date.now() + ROOM_TTL_MS;
+            }
+          }
           // Echo back client timestamp 't' for signal round-trip latency measurement
           ws.send(JSON.stringify({ 
             type: 'pong', 
@@ -232,6 +239,73 @@ wss.on('connection', (ws: WebSocket) => {
             expiresAt,
             ttlSeconds: ROOM_TTL_SECONDS,
             ttlRemainingSeconds: ROOM_TTL_SECONDS
+          }));
+          break;
+        }
+
+        case 'refresh-room': {
+          if (message.oldRoomCode) {
+            const oldCode = cleanCode(message.oldRoomCode);
+            const oldRoom = rooms.get(oldCode);
+            if (oldRoom) {
+              if (oldRoom.receiver && oldRoom.receiver.ws.readyState === WebSocket.OPEN) {
+                oldRoom.receiver.ws.send(JSON.stringify({
+                  type: 'peer-left',
+                  message: 'Sender refreshed the session and generated a new 6-character code'
+                }));
+              }
+              if (oldRoom.disconnectTimeout) clearTimeout(oldRoom.disconnectTimeout);
+              rooms.delete(oldCode);
+            }
+          }
+
+          const newCode = generateRoomCode();
+          const now = Date.now();
+          const expiresAt = now + ROOM_TTL_MS;
+
+          peer.roomCode = newCode;
+          peer.role = 'sender';
+
+          rooms.set(newCode, {
+            code: newCode,
+            sender: peer,
+            createdAt: now,
+            expiresAt,
+            ttlSeconds: ROOM_TTL_SECONDS,
+            filesMeta: message.filesMeta || [],
+            relayFiles: new Map()
+          });
+
+          ws.send(JSON.stringify({
+            type: 'room-created',
+            roomCode: newCode,
+            filesMeta: message.filesMeta || [],
+            createdAt: now,
+            expiresAt,
+            ttlSeconds: ROOM_TTL_SECONDS,
+            ttlRemainingSeconds: ROOM_TTL_SECONDS
+          }));
+          break;
+        }
+
+        case 'stop-transfer': {
+          const code = cleanCode(message.roomCode);
+          const room = rooms.get(code);
+          if (room) {
+            if (room.receiver && room.receiver.ws.readyState === WebSocket.OPEN) {
+              room.receiver.ws.send(JSON.stringify({
+                type: 'peer-left',
+                message: 'Sender stopped transfer and closed the session code'
+              }));
+            }
+            if (room.disconnectTimeout) clearTimeout(room.disconnectTimeout);
+            rooms.delete(code);
+          }
+          peer.roomCode = undefined;
+          peer.role = undefined;
+          ws.send(JSON.stringify({
+            type: 'transfer-stopped',
+            roomCode: code
           }));
           break;
         }
@@ -809,7 +883,24 @@ app.get('/api/admin/seed-sql', (req, res) => {
 });
 
 async function startServer() {
-  if (!isProduction) {
+  const distPath = path.resolve(process.cwd(), 'dist');
+
+  // Natively serve static files from dist directory if it exists
+  if (fs.existsSync(distPath)) {
+    console.log(`[Server] Serving static assets natively from: ${distPath}`);
+    app.use(express.static(distPath));
+    app.get('*', (req, res, next) => {
+      if (req.originalUrl.startsWith('/api') || req.originalUrl.startsWith('/ws')) {
+        return next();
+      }
+      const indexPath = path.resolve(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        next();
+      }
+    });
+  } else if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
@@ -826,19 +917,13 @@ async function startServer() {
     app.use('*', async (req, res, next) => {
       const url = req.originalUrl;
       try {
-        let template = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf-8');
+        let template = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf-8');
         template = await vite.transformIndexHtml(url, template);
         res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
       } catch (e: any) {
         vite.ssrFixStacktrace(e);
         next(e);
       }
-    });
-  } else {
-    const distPath = path.resolve(__dirname);
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.resolve(distPath, 'index.html'));
     });
   }
 

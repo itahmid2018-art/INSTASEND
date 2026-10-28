@@ -282,6 +282,20 @@ export const SendTab: React.FC<SendTabProps> = ({
     sound.playConnect();
   };
 
+  const handleRefreshCode = () => {
+    if (webrtc) {
+      webrtc.refreshRoomCode();
+      sound.playConnect();
+    }
+  };
+
+  const handleStopTransfer = () => {
+    if (webrtc) {
+      webrtc.stopTransfer();
+    }
+    onReset();
+  };
+
   const copyRoomCode = () => {
     if (!roomCode) return;
     navigator.clipboard.writeText(roomCode);
@@ -838,7 +852,7 @@ export const SendTab: React.FC<SendTabProps> = ({
                 Session Active • Ready to Transfer
               </span>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-[#137333] border border-emerald-200">
-                10m Room Validity
+                Active Until Tab Closed or Stopped
               </span>
             </div>
 
@@ -875,7 +889,7 @@ export const SendTab: React.FC<SendTabProps> = ({
               </div>
             )}
 
-            {/* Direct Link & Expand Action Buttons */}
+            {/* Direct Link, Refresh & Stop Action Buttons */}
             <div className="flex flex-wrap items-center gap-2 pt-1 justify-center md:justify-start">
               <button
                 type="button"
@@ -888,11 +902,31 @@ export const SendTab: React.FC<SendTabProps> = ({
 
               <button
                 type="button"
-                onClick={() => setIsQRModalOpen(true)}
+                onClick={handleRefreshCode}
                 className="flex items-center gap-1.5 text-xs text-[#1a73e8] hover:bg-blue-50 px-3.5 py-1.5 rounded-full border border-[#1a73e8]/30 transition-colors cursor-pointer font-medium"
+                title="Generate a new 6-character room code and update QR code"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-[#1a73e8]" />
+                <span>Refresh Code</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleStopTransfer}
+                className="flex items-center gap-1.5 text-xs text-[#d93025] hover:bg-red-50 px-3.5 py-1.5 rounded-full border border-red-200 transition-colors cursor-pointer font-medium"
+                title="Stop transfer and close session code"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Stop Transfer</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsQRModalOpen(true)}
+                className="flex items-center gap-1.5 text-xs text-[#3c4043] hover:bg-[#f1f3f4] px-3.5 py-1.5 rounded-full border border-[#dadce0] transition-colors cursor-pointer font-medium"
               >
                 <Maximize2 className="w-3.5 h-3.5" />
-                <span>Expand Fullscreen QR</span>
+                <span>Fullscreen QR</span>
               </button>
             </div>
           </div>
