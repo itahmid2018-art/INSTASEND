@@ -117,3 +117,65 @@ export type SessionState =
   | 'transferring' 
   | 'completed' 
   | 'error';
+
+export interface RoomValidityInfo {
+  code: string;
+  totalTtlSeconds: number;
+  ttlRemainingSeconds: number;
+  expiresAt: number;
+  createdAt: number;
+  isExpired: boolean;
+  senderOnline?: boolean;
+}
+
+export interface CandidateInfo {
+  id: string;
+  type: 'host' | 'srflx' | 'relay' | 'prflx' | 'unknown';
+  protocol: 'udp' | 'tcp' | 'unknown';
+  address?: string;
+  port?: number;
+  priority?: number;
+  timestamp: number;
+}
+
+export interface DiagnosticLogEntry {
+  id: string;
+  timestamp: number;
+  elapsedMs: number;
+  category: 'ice' | 'gathering' | 'latency' | 'signaling' | 'datachannel' | 'room';
+  level: 'info' | 'warn' | 'error' | 'success';
+  message: string;
+  details?: Record<string, any>;
+}
+
+export interface DiagnosticReport {
+  sessionId: string;
+  startedAt: number;
+  elapsedMs: number;
+  isWindowActive: boolean; // active during the initial 30 seconds
+  remainingWindowSeconds: number;
+  iceConnectionState: RTCIceConnectionState;
+  iceGatheringState: RTCIceGatheringState;
+  peerConnectionState: RTCPeerConnectionState | 'uninitialized';
+  signalLatencyMs: number | null;
+  avgSignalLatencyMs: number | null;
+  minSignalLatencyMs: number | null;
+  maxSignalLatencyMs: number | null;
+  signalLatencyHistory: { timestamp: number; latencyMs: number }[];
+  candidates: CandidateInfo[];
+  candidateCounts: {
+    host: number;
+    srflx: number;
+    relay: number;
+    prflx: number;
+    total: number;
+  };
+  gatheringDurationMs: number | null;
+  logs: DiagnosticLogEntry[];
+  summaryDiagnosis: {
+    status: 'healthy' | 'investigating' | 'warning' | 'critical';
+    title: string;
+    description: string;
+    actionableAdvice: string;
+  };
+}

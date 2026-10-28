@@ -22,9 +22,11 @@ import {
   ArrowDown,
   Camera,
   QrCode,
-  Wifi
+  Wifi,
+  Activity,
+  Clock
 } from 'lucide-react';
-import { FileItem, TransferMetrics, DeviceInfo, ChatMessage } from '../types.ts';
+import { FileItem, TransferMetrics, DeviceInfo, ChatMessage, DiagnosticReport, RoomValidityInfo } from '../types.ts';
 import { formatBytes, formatDuration } from '../services/device.ts';
 import { sound } from '../services/sound.ts';
 import { WebRTCManager } from '../services/webrtc.ts';
@@ -32,6 +34,7 @@ import { QRCodeModal } from './QRCodeModal.tsx';
 import { SpeedChart } from './SpeedChart.tsx';
 import { SpeedGauge } from './SpeedGauge.tsx';
 import { buildShareUrl } from '../services/network.ts';
+import { DiagnosticModal } from './DiagnosticModal.tsx';
 
 interface ReceiveTabProps {
   webrtc: WebRTCManager | null;
@@ -46,6 +49,8 @@ interface ReceiveTabProps {
   initialCode?: string;
   errorMessage?: string | null;
   onOpenOfflineModal?: () => void;
+  diagnosticReport?: DiagnosticReport | null;
+  roomValidity?: RoomValidityInfo | null;
 }
 
 export const ReceiveTab: React.FC<ReceiveTabProps> = ({
@@ -60,7 +65,9 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
   onReset,
   initialCode = '',
   errorMessage,
-  onOpenOfflineModal
+  onOpenOfflineModal,
+  diagnosticReport,
+  roomValidity
 }) => {
   const [inputCode, setInputCode] = useState(initialCode.toUpperCase());
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
@@ -73,6 +80,57 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
   const [copiedLink, setCopiedLink] = useState(false);
   const [statusNotice, setStatusNotice] = useState<{ type: 'info' | 'warning' | 'error'; message: string } | null>(null);
   const [isDownloadingLan, setIsDownloadingLan] = useState<string | null>(null);
+
+  // Diagnostics & Validity Countdown State
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
+  const [localReport, setLocalReport] = useState<DiagnosticReport | null>(() => webrtc?.getDiagnosticReport() || null);
+  const [localValidity, setLocalValidity] = useState<RoomValidityInfo | null>(() => webrtc?.getRoomValidity() || null);
+  const activeValidity = roomValidity || localValidity;
+  const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null);
+
+  // Subscribe to real-time WebRTC diagnostics updates
+  useEffect(() => {
+    if (!webrtc) return;
+    const unsub = webrtc.subscribeDiagnostics((rep) => {
+      setLocalReport(rep);
+    });
+    return unsub;
+  }, [webrtc]);
+
+  // Sync active report from prop if provided
+  useEffect(() => {
+    if (diagnosticReport) {
+      setLocalReport(diagnosticReport);
+    }
+  }, [diagnosticReport]);
+
+  // Sync room validity from prop
+  useEffect(() => {
+    if (roomValidity) {
+      setLocalValidity(roomValidity);
+    }
+  }, [roomValidity]);
+
+  // Room Validity Countdown Ticker
+  useEffect(() => {
+    if (!activeValidity?.expiresAt) {
+      setSecondsRemaining(null);
+      return;
+    }
+
+    const updateRemaining = () => {
+      const now = Date.now();
+      const diff = Math.max(0, Math.floor((activeValidity.expiresAt - now) / 1000));
+      setSecondsRemaining(diff);
+      if (diff === 0 && !activeValidity.isExpired) {
+        setLocalValidity(prev => prev ? { ...prev, isExpired: true, ttlRemainingSeconds: 0 } : null);
+      }
+    };
+
+    updateRemaining();
+    const interval = setInterval(updateRemaining, 1000);
+    return () => clearInterval(interval);
+  }, [activeValidity?.expiresAt, activeValidity?.isExpired]);
 
   const copyShareLink = () => {
     if (!roomCode) return;
@@ -89,6 +147,18 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
       .then(res => res.json())
       .then(data => {
         if (data.exists) {
+          const val: RoomValidityInfo = {
+            code: clean,
+            totalTtlSeconds: data.ttlSeconds || 600,
+            ttlRemainingSeconds: data.ttlRemainingSeconds !== undefined ? data.ttlRemainingSeconds : (data.ttlSeconds || 600),
+            expiresAt: data.expiresAt || (Date.now() + (data.ttlSeconds || 600) * 1000),
+            createdAt: data.createdAt || Date.now(),
+            isExpired: false,
+            senderOnline: data.senderOnline
+          };
+          setLocalValidity(val);
+          webrtc?.setRoomValidity(val);
+
           if (!data.senderOnline) {
             setStatusNotice({
               type: 'warning',
@@ -97,13 +167,27 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
           } else {
             setStatusNotice({
               type: 'info',
-              message: `Session ${clean} confirmed! Connecting to ${data.senderInfo?.name || 'Sender'}...`
+              message: `Session ${clean} confirmed! Connecting to ${data.senderInfo?.name || 'Sender'} (valid for ${Math.round((val.ttlRemainingSeconds || 600)/60)}m)...`
             });
           }
         } else {
+          const isExp = data.expired;
+          const val: RoomValidityInfo = {
+            code: clean,
+            totalTtlSeconds: 600,
+            ttlRemainingSeconds: 0,
+            expiresAt: Date.now(),
+            createdAt: Date.now() - 600000,
+            isExpired: true
+          };
+          setLocalValidity(val);
+          webrtc?.setRoomValidity(val);
+
           setStatusNotice({
             type: 'error',
-            message: `Session code ${clean} was not found or has expired. Make sure both devices are connected to the same LAN / Wi-Fi.`
+            message: isExp 
+              ? `Session code ${clean} has expired (10-minute validity elapsed). Ask sender for a new code or link.`
+              : `Session code ${clean} was not found or has expired. Make sure both devices are connected to the same LAN / Wi-Fi.`
           });
         }
       })
@@ -308,6 +392,147 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
     return <FileText className="w-5 h-5 text-[#5f6368]" />;
   };
 
+  // Render Visual Room Code Validity Countdown
+  const renderValidityCountdown = (compact = false) => {
+    if (!activeValidity || secondsRemaining === null) return null;
+
+    const total = activeValidity.totalTtlSeconds || 600;
+    const pct = Math.max(0, Math.min(100, (secondsRemaining / total) * 100));
+    const mins = Math.floor(secondsRemaining / 60);
+    const secs = secondsRemaining % 60;
+    const timeFormatted = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+
+    const isExpired = secondsRemaining === 0 || activeValidity.isExpired;
+    const isUrgent = secondsRemaining > 0 && secondsRemaining <= 60;
+    const isWarning = secondsRemaining > 60 && secondsRemaining <= 180;
+
+    const ringColor = isExpired 
+      ? '#EA4335' 
+      : isUrgent 
+        ? '#EA4335' 
+        : isWarning 
+          ? '#FBBC05' 
+          : '#34A853';
+
+    const badgeBg = isExpired 
+      ? 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800 text-[#d93025] dark:text-[#f28b82]' 
+      : isUrgent 
+        ? 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800 text-[#d93025] dark:text-[#f28b82] animate-pulse' 
+        : isWarning 
+          ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300' 
+          : 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-[#137333] dark:text-[#81c995]';
+
+    const radius = compact ? 11 : 16;
+    const stroke = compact ? 2 : 2.5;
+    const normalizedRadius = radius - stroke * 2;
+    const circumference = normalizedRadius * 2 * Math.PI;
+    const strokeDashoffset = circumference - (pct / 100) * circumference;
+
+    if (compact) {
+      return (
+        <div 
+          onClick={() => setIsDiagnosticsOpen(true)}
+          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border text-xs font-medium cursor-pointer shadow-2xs ${badgeBg}`}
+          title={`Session code valid for ${timeFormatted} (10m TTL limit). Click to view connection diagnostics.`}
+        >
+          <svg height={radius * 2} width={radius * 2} className="shrink-0 -rotate-90">
+            <circle
+              stroke="#dadce0"
+              fill="transparent"
+              strokeWidth={stroke}
+              r={normalizedRadius}
+              cx={radius}
+              cy={radius}
+              className="opacity-40"
+            />
+            <circle
+              stroke={ringColor}
+              fill="transparent"
+              strokeWidth={stroke}
+              strokeDasharray={`${circumference} ${circumference}`}
+              style={{ strokeDashoffset }}
+              strokeLinecap="round"
+              r={normalizedRadius}
+              cx={radius}
+              cy={radius}
+              className="transition-all duration-1000 ease-linear"
+            />
+          </svg>
+          <span className="font-mono font-bold tracking-tight text-[11px]">
+            {isExpired ? 'Expired' : timeFormatted}
+          </span>
+          {isUrgent && <span className="text-[10px] font-bold">⚠️ Soon</span>}
+        </div>
+      );
+    }
+
+    return (
+      <div className={`p-3.5 rounded-2xl border ${badgeBg} space-y-2 transition-all`}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="relative shrink-0 flex items-center justify-center">
+              <svg height={radius * 2} width={radius * 2} className="-rotate-90">
+                <circle
+                  stroke="#dadce0"
+                  fill="transparent"
+                  strokeWidth={stroke}
+                  r={normalizedRadius}
+                  cx={radius}
+                  cy={radius}
+                  className="opacity-30"
+                />
+                <circle
+                  stroke={ringColor}
+                  fill="transparent"
+                  strokeWidth={stroke}
+                  strokeDasharray={`${circumference} ${circumference}`}
+                  style={{ strokeDashoffset }}
+                  strokeLinecap="round"
+                  r={normalizedRadius}
+                  cx={radius}
+                  cy={radius}
+                  className="transition-all duration-1000 ease-linear"
+                />
+              </svg>
+              <Clock className="w-3.5 h-3.5 absolute text-current opacity-80" />
+            </div>
+
+            <div>
+              <div className="font-bold text-xs flex items-center gap-1.5">
+                <span>{isExpired ? 'Session Code Expired' : isUrgent ? 'Session Code Expiring Soon!' : 'Session Code Validity'}</span>
+                <span className="font-mono text-xs font-black">({timeFormatted})</span>
+              </div>
+              <p className="text-[11px] opacity-90 leading-tight">
+                {isExpired 
+                  ? '10-minute validity elapsed on signaling server. Sender can re-generate code.' 
+                  : isUrgent 
+                    ? 'Less than 1 minute remaining before this 6-digit code expires.' 
+                    : 'Time-to-Live verified by signaling server (10m TTL limit).'}
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsDiagnosticsOpen(true)}
+            className="shrink-0 px-2.5 py-1 rounded-full bg-white/90 dark:bg-black/30 hover:bg-white text-xs font-semibold flex items-center gap-1 border border-current shadow-2xs transition-colors cursor-pointer"
+          >
+            <Activity className="w-3 h-3" />
+            <span>Diagnostics</span>
+          </button>
+        </div>
+
+        {/* Progress Bar */}
+        <div className="w-full h-1.5 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
+          <div 
+            className="h-full rounded-full transition-all duration-1000 ease-linear"
+            style={{ width: `${pct}%`, backgroundColor: ringColor }}
+          />
+        </div>
+      </div>
+    );
+  };
+
   // 1. Initial State: Code Entry
   if (!roomCode) {
     return (
@@ -321,6 +546,9 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
             Enter the 6-character code or scan the QR code to connect directly.
           </p>
         </div>
+
+        {/* Visual Room Validity Countdown widget if code entered or active */}
+        {renderValidityCountdown(false)}
 
         {statusNotice && (
           <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
@@ -344,9 +572,24 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
 
         <form onSubmit={handleJoin} className="space-y-5">
           <div className="space-y-3">
-            <label className="block text-xs font-semibold text-[#5f6368] text-center uppercase tracking-wider">
-              6-Character Transfer Code
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-semibold text-[#5f6368] uppercase tracking-wider">
+                6-Character Transfer Code
+              </label>
+
+              {/* Diagnostics trigger link */}
+              <button
+                type="button"
+                onClick={() => setIsDiagnosticsOpen(true)}
+                className="text-[11px] font-medium text-[#1a73e8] hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <Activity className="w-3 h-3" />
+                <span>Diagnostics</span>
+                {localReport?.signalLatencyMs !== null && (
+                  <span className="font-mono text-[10px]">({localReport?.signalLatencyMs}ms)</span>
+                )}
+              </button>
+            </div>
 
             {/* Google Style 6 Segmented Character Boxes */}
             <div className="flex items-center justify-center gap-2 sm:gap-2.5">
@@ -425,6 +668,17 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
             handlePastedCode(scannedCode);
           }}
         />
+
+        {/* Connection Diagnostics Modal */}
+        <DiagnosticModal
+          isOpen={isDiagnosticsOpen}
+          onClose={() => setIsDiagnosticsOpen(false)}
+          report={localReport}
+          roomValidity={activeValidity}
+          onRunDiagnostics={() => {
+            webrtc?.startDiagnostics('Manual check from ReceiveTab');
+          }}
+        />
       </div>
     );
   }
@@ -436,11 +690,13 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
       <div className="p-6 rounded-3xl bg-white border border-[#dadce0] google-card-shadow space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="w-2.5 h-2.5 rounded-full bg-[#34A853] animate-pulse" />
               <span className="text-xs uppercase font-bold tracking-wider text-[#188038]">
                 Connected • Code: <strong className="font-mono text-[#1a73e8]">{roomCode}</strong>
               </span>
+              {/* Visual Validity Countdown Ring in Active Session */}
+              {renderValidityCountdown(true)}
             </div>
             <p className="text-xs text-[#5f6368] mt-1">
               Sender: <strong className="text-[#202124]">{remotePeerInfo?.name || 'Sender Device'}</strong>
@@ -448,6 +704,21 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Live Diagnostics Pill Button */}
+            <button
+              type="button"
+              onClick={() => setIsDiagnosticsOpen(true)}
+              className="px-3 py-1.5 rounded-full bg-slate-50 hover:bg-slate-100 text-[#202124] font-medium text-xs flex items-center gap-1.5 border border-[#dadce0] transition-all cursor-pointer shadow-2xs"
+              title="Inspect WebRTC connection state, gathering cycles & signal latency"
+            >
+              <Activity className="w-3.5 h-3.5 text-[#1a73e8]" />
+              <span>Diagnostics</span>
+              {localReport?.signalLatencyMs != null && (
+                <span className="font-mono text-[10px] text-[#5f6368]">
+                  {localReport.signalLatencyMs}ms
+                </span>
+              )}
+            </button>
             {roomCode && (
               <button
                 type="button"
@@ -825,6 +1096,17 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
           </div>
         </div>
       )}
+
+      {/* Connection Diagnostics Modal */}
+      <DiagnosticModal
+        isOpen={isDiagnosticsOpen}
+        onClose={() => setIsDiagnosticsOpen(false)}
+        report={localReport}
+        roomValidity={activeValidity}
+        onRunDiagnostics={() => {
+          webrtc?.startDiagnostics('Manual check from ReceiveTab');
+        }}
+      />
     </div>
   );
 };

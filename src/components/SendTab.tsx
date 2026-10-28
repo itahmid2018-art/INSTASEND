@@ -832,10 +832,13 @@ export const SendTab: React.FC<SendTabProps> = ({
         <div className="flex flex-col md:flex-row items-center md:items-start justify-between gap-6 pt-2">
           {/* Left: 6-Character Code & Share Link */}
           <div className="flex-1 text-center md:text-left space-y-3 w-full">
-            <div className="flex items-center gap-2 justify-center md:justify-start">
+            <div className="flex items-center gap-2 justify-center md:justify-start flex-wrap">
               <span className="w-2.5 h-2.5 rounded-full bg-[#34A853] animate-pulse" />
               <span className="text-xs uppercase font-bold tracking-wider text-[#188038]">
                 Session Active • Ready to Transfer
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-[#137333] border border-emerald-200">
+                10m Room Validity
               </span>
             </div>
 

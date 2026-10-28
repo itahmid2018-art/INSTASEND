@@ -74,11 +74,16 @@ export interface RelayFile {
   isComplete: boolean;
 }
 
+export const ROOM_TTL_SECONDS = 600; // 10 minutes default Time-To-Live
+const ROOM_TTL_MS = ROOM_TTL_SECONDS * 1000;
+
 interface Room {
   code: string;
   sender?: Peer;
   receiver?: Peer;
   createdAt: number;
+  expiresAt: number;
+  ttlSeconds: number;
   disconnectedAt?: number;
   disconnectTimeout?: NodeJS.Timeout;
   filesMeta?: {
@@ -109,16 +114,16 @@ function generateRoomCode(): string {
   return rooms.has(code) ? generateRoomCode() : code;
 }
 
-// Clean up stale rooms older than 4 hours
+// Clean up stale rooms past TTL or older than 4 hours
 setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms.entries()) {
-    if (now - room.createdAt > 4 * 60 * 60 * 1000) {
+    if (now > room.expiresAt || now - room.createdAt > 4 * 60 * 60 * 1000) {
       if (room.disconnectTimeout) clearTimeout(room.disconnectTimeout);
       rooms.delete(code);
     }
   }
-}, 10 * 60 * 1000);
+}, 30 * 1000);
 
 wss.on('connection', (ws: WebSocket) => {
   const peerId = Math.random().toString(36).substring(2, 10);
@@ -137,7 +142,12 @@ wss.on('connection', (ws: WebSocket) => {
 
       switch (message.type) {
         case 'ping': {
-          ws.send(JSON.stringify({ type: 'pong' }));
+          // Echo back client timestamp 't' for signal round-trip latency measurement
+          ws.send(JSON.stringify({ 
+            type: 'pong', 
+            t: message.t, 
+            serverTime: Date.now() 
+          }));
           break;
         }
 
@@ -157,8 +167,11 @@ wss.on('connection', (ws: WebSocket) => {
           const requestedCode = cleanCode(message.customCode);
           let actualCode = requestedCode || generateRoomCode();
 
+          const now = Date.now();
+          const expiresAt = now + ROOM_TTL_MS;
+
           const existingRoom = rooms.get(actualCode);
-          if (existingRoom) {
+          if (existingRoom && now <= existingRoom.expiresAt) {
             // If sender is re-creating their room or reclaiming after brief disconnect
             if (existingRoom.disconnectTimeout) {
               clearTimeout(existingRoom.disconnectTimeout);
@@ -172,10 +185,16 @@ wss.on('connection', (ws: WebSocket) => {
             peer.roomCode = actualCode;
             peer.role = 'sender';
 
+            const ttlRemaining = Math.max(0, Math.floor((existingRoom.expiresAt - now) / 1000));
+
             ws.send(JSON.stringify({
               type: 'room-created',
               roomCode: actualCode,
-              filesMeta: existingRoom.filesMeta || []
+              filesMeta: existingRoom.filesMeta || [],
+              createdAt: existingRoom.createdAt,
+              expiresAt: existingRoom.expiresAt,
+              ttlSeconds: existingRoom.ttlSeconds || ROOM_TTL_SECONDS,
+              ttlRemainingSeconds: ttlRemaining
             }));
 
             if (existingRoom.receiver && existingRoom.receiver.ws.readyState === WebSocket.OPEN) {
@@ -198,7 +217,9 @@ wss.on('connection', (ws: WebSocket) => {
           rooms.set(actualCode, {
             code: actualCode,
             sender: peer,
-            createdAt: Date.now(),
+            createdAt: now,
+            expiresAt,
+            ttlSeconds: ROOM_TTL_SECONDS,
             filesMeta: message.filesMeta || [],
             relayFiles: new Map()
           });
@@ -206,7 +227,11 @@ wss.on('connection', (ws: WebSocket) => {
           ws.send(JSON.stringify({
             type: 'room-created',
             roomCode: actualCode,
-            filesMeta: message.filesMeta || []
+            filesMeta: message.filesMeta || [],
+            createdAt: now,
+            expiresAt,
+            ttlSeconds: ROOM_TTL_SECONDS,
+            ttlRemainingSeconds: ROOM_TTL_SECONDS
           }));
           break;
         }
@@ -214,8 +239,9 @@ wss.on('connection', (ws: WebSocket) => {
         case 'reclaim-room': {
           const code = cleanCode(message.roomCode);
           let room = rooms.get(code);
+          const now = Date.now();
 
-          if (room) {
+          if (room && now <= room.expiresAt) {
             if (room.disconnectTimeout) {
               clearTimeout(room.disconnectTimeout);
               room.disconnectTimeout = undefined;
@@ -228,10 +254,16 @@ wss.on('connection', (ws: WebSocket) => {
               room.filesMeta = message.filesMeta;
             }
 
+            const ttlRemaining = Math.max(0, Math.floor((room.expiresAt - now) / 1000));
+
             ws.send(JSON.stringify({
               type: 'room-created',
               roomCode: code,
-              filesMeta: room.filesMeta || []
+              filesMeta: room.filesMeta || [],
+              createdAt: room.createdAt,
+              expiresAt: room.expiresAt,
+              ttlSeconds: room.ttlSeconds || ROOM_TTL_SECONDS,
+              ttlRemainingSeconds: ttlRemaining
             }));
 
             if (room.receiver && room.receiver.ws.readyState === WebSocket.OPEN) {
@@ -249,10 +281,13 @@ wss.on('connection', (ws: WebSocket) => {
             // Re-create room with the same code so sender's QR code & links stay valid
             peer.roomCode = code;
             peer.role = 'sender';
+            const expiresAt = now + ROOM_TTL_MS;
             rooms.set(code, {
               code,
               sender: peer,
-              createdAt: Date.now(),
+              createdAt: now,
+              expiresAt,
+              ttlSeconds: ROOM_TTL_SECONDS,
               filesMeta: message.filesMeta || [],
               relayFiles: new Map()
             });
@@ -260,7 +295,11 @@ wss.on('connection', (ws: WebSocket) => {
             ws.send(JSON.stringify({
               type: 'room-created',
               roomCode: code,
-              filesMeta: message.filesMeta || []
+              filesMeta: message.filesMeta || [],
+              createdAt: now,
+              expiresAt,
+              ttlSeconds: ROOM_TTL_SECONDS,
+              ttlRemainingSeconds: ROOM_TTL_SECONDS
             }));
           }
           break;
@@ -269,8 +308,13 @@ wss.on('connection', (ws: WebSocket) => {
         case 'join-room': {
           const code = cleanCode(message.roomCode);
           const room = rooms.get(code);
+          const now = Date.now();
 
-          if (!room) {
+          if (!room || now > room.expiresAt) {
+            if (room && now > room.expiresAt) {
+              if (room.disconnectTimeout) clearTimeout(room.disconnectTimeout);
+              rooms.delete(code);
+            }
             ws.send(JSON.stringify({
               type: 'error',
               code: 'ROOM_NOT_FOUND',
@@ -280,6 +324,7 @@ wss.on('connection', (ws: WebSocket) => {
           }
 
           const senderOnline = !!(room.sender && room.sender.ws.readyState === WebSocket.OPEN);
+          const ttlRemaining = Math.max(0, Math.floor((room.expiresAt - now) / 1000));
 
           peer.roomCode = code;
           peer.role = 'receiver';
@@ -291,7 +336,11 @@ wss.on('connection', (ws: WebSocket) => {
             roomCode: code,
             senderOnline,
             senderInfo: room.sender?.deviceInfo || { name: 'Sender Device' },
-            filesMeta: room.filesMeta || []
+            filesMeta: room.filesMeta || [],
+            createdAt: room.createdAt,
+            expiresAt: room.expiresAt,
+            ttlSeconds: room.ttlSeconds || ROOM_TTL_SECONDS,
+            ttlRemainingSeconds: ttlRemaining
           }));
 
           // Notify sender that receiver has arrived (if online)
@@ -469,23 +518,33 @@ app.get('/api/network-info', (req, res) => {
 app.get('/api/room/:code', (req, res) => {
   const code = cleanCode(req.params.code);
   const room = rooms.get(code);
+  const now = Date.now();
 
-  if (!room) {
+  if (!room || now > room.expiresAt) {
+    if (room && now > room.expiresAt) {
+      if (room.disconnectTimeout) clearTimeout(room.disconnectTimeout);
+      rooms.delete(code);
+    }
     return res.json({
       success: false,
       exists: false,
+      expired: true,
       code,
       message: `Session code ${code} was not found or has expired.`
     });
   }
 
   const senderOnline = !!(room.sender && room.sender.ws.readyState === WebSocket.OPEN);
+  const ttlRemaining = Math.max(0, Math.floor((room.expiresAt - now) / 1000));
 
   res.json({
     success: true,
     exists: true,
     code: room.code,
     createdAt: room.createdAt,
+    expiresAt: room.expiresAt,
+    ttlSeconds: room.ttlSeconds || ROOM_TTL_SECONDS,
+    ttlRemainingSeconds: ttlRemaining,
     senderOnline,
     disconnectedAt: room.disconnectedAt || null,
     senderInfo: room.sender?.deviceInfo || { name: 'Sender Device' },

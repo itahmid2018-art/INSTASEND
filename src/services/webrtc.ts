@@ -1,4 +1,13 @@
-import { DeviceInfo, FileItem, TransferMetrics, ChatMessage } from '../types.ts';
+import { 
+  DeviceInfo, 
+  FileItem, 
+  TransferMetrics, 
+  ChatMessage,
+  DiagnosticReport,
+  DiagnosticLogEntry,
+  CandidateInfo,
+  RoomValidityInfo
+} from '../types.ts';
 import { getLocalDeviceInfo, computeSHA256 } from './device.ts';
 import { 
   isCompressibleTextFile, 
@@ -34,6 +43,8 @@ export type WebRTCEvents = {
   onRadarUpdate: (peers: { id: string; deviceInfo: DeviceInfo }[]) => void;
   onDirectInvite: (invite: { fromPeerId: string; fromDeviceInfo?: DeviceInfo; roomCode: string; filesMeta?: any[] }) => void;
   onError: (errorMsg: string) => void;
+  onDiagnosticUpdate?: (report: DiagnosticReport) => void;
+  onRoomValidityUpdate?: (validity: RoomValidityInfo) => void;
 };
 
 export class WebRTCManager {
@@ -60,6 +71,21 @@ export class WebRTCManager {
   private smoothedSpeed = 0;
   private chatMessageTimestamps: number[] = [];
   private lastBufferWarningTime = 0;
+
+  // Connection Diagnostics Engine (30-second window, ICE monitoring, signal latency)
+  private diagnosticSessionId = '';
+  private diagnosticStartedAt = 0;
+  private diagnosticWindowDurationMs = 30000; // 30 seconds initial diagnostic window
+  private isDiagnosticActive = false;
+  private diagnosticTimer: any = null;
+  private diagnosticLogs: DiagnosticLogEntry[] = [];
+  private candidates: CandidateInfo[] = [];
+  private gatheringStartTime: number | null = null;
+  private gatheringCompleteTime: number | null = null;
+  private signalLatencyHistory: { timestamp: number; latencyMs: number }[] = [];
+  private pendingPings = new Map<number, number>();
+  private roomValidity: RoomValidityInfo | null = null;
+  private diagnosticListeners: ((report: DiagnosticReport) => void)[] = [];
 
   constructor(events: Partial<WebRTCEvents>) {
     this.events = events;
@@ -170,7 +196,29 @@ export class WebRTCManager {
     switch (msg.type) {
       case 'connected':
         this.peerId = msg.peerId;
+        this.logDiagnostic('signaling', 'info', `Connected to signaling server with Peer ID: ${msg.peerId}`);
         break;
+
+      case 'pong': {
+        if (msg.t && typeof msg.t === 'number') {
+          const sentAt = this.pendingPings.get(msg.t) || msg.t;
+          this.pendingPings.delete(msg.t);
+          const rtt = Math.max(1, Date.now() - sentAt);
+          this.signalLatencyHistory.push({ timestamp: Date.now(), latencyMs: rtt });
+          if (this.signalLatencyHistory.length > 50) {
+            this.signalLatencyHistory.shift();
+          }
+          const level: 'info' | 'warn' = rtt > 350 ? 'warn' : 'info';
+          this.logDiagnostic(
+            'latency',
+            level,
+            `Signaling server round-trip latency: ${rtt}ms (avg: ${this.getAverageLatency()}ms)`,
+            { rtt, avg: this.getAverageLatency() }
+          );
+          this.emitDiagnosticUpdate();
+        }
+        break;
+      }
 
       case 'radar-list':
         this.events.onRadarUpdate?.(msg.peers || []);
@@ -181,30 +229,82 @@ export class WebRTCManager {
         break;
 
       case 'room-created':
-      case 'room-reclaimed':
+      case 'room-reclaimed': {
         this.roomCode = msg.roomCode;
         this.role = 'sender';
-        this.events.onRoomCreated?.(msg.roomCode);
-        this.events.onStateChange?.('waiting_for_peer');
-        break;
 
-      case 'room-joined':
+        const totalTtl = msg.ttlSeconds || 600;
+        const ttlRemaining = msg.ttlRemainingSeconds !== undefined ? msg.ttlRemainingSeconds : totalTtl;
+        const expiresAt = msg.expiresAt || (Date.now() + totalTtl * 1000);
+
+        this.roomValidity = {
+          code: msg.roomCode,
+          totalTtlSeconds: totalTtl,
+          ttlRemainingSeconds: ttlRemaining,
+          expiresAt,
+          createdAt: msg.createdAt || Date.now(),
+          isExpired: false,
+          senderOnline: true
+        };
+
+        this.events.onRoomCreated?.(msg.roomCode);
+        this.events.onRoomValidityUpdate?.(this.roomValidity);
+        this.events.onStateChange?.('waiting_for_peer');
+
+        this.logDiagnostic(
+          'room',
+          'success',
+          `Session room ${msg.roomCode} active with ${Math.round(totalTtl / 60)}m validity (${ttlRemaining}s remaining until expiration)`,
+          { roomCode: msg.roomCode, expiresAt, ttlRemaining }
+        );
+        this.emitDiagnosticUpdate();
+        break;
+      }
+
+      case 'room-joined': {
         this.roomCode = msg.roomCode;
         this.role = 'receiver';
         this.remotePeerInfo = msg.senderInfo;
+
+        const totalTtl = msg.ttlSeconds || 600;
+        const ttlRemaining = msg.ttlRemainingSeconds !== undefined ? msg.ttlRemainingSeconds : totalTtl;
+        const expiresAt = msg.expiresAt || (Date.now() + totalTtl * 1000);
+
+        this.roomValidity = {
+          code: msg.roomCode,
+          totalTtlSeconds: totalTtl,
+          ttlRemainingSeconds: ttlRemaining,
+          expiresAt,
+          createdAt: msg.createdAt || Date.now(),
+          isExpired: false,
+          senderOnline: msg.senderOnline
+        };
+
         this.events.onRoomJoined?.(msg.roomCode, msg.filesMeta);
+        this.events.onRoomValidityUpdate?.(this.roomValidity);
         this.events.onStateChange?.('connecting_webrtc');
+
+        this.logDiagnostic(
+          'room',
+          'success',
+          `Successfully verified session ${msg.roomCode} on signaling server. Sender is ${msg.senderOnline ? 'ONLINE' : 'reconnecting'}. TTL remaining: ${ttlRemaining}s.`,
+          { roomCode: msg.roomCode, expiresAt, senderOnline: msg.senderOnline }
+        );
+
         // Initialize PeerConnection as answerer
         this.initPeerConnection();
         break;
+      }
 
       case 'sender-reconnected':
+        this.logDiagnostic('signaling', 'info', `Sender reconnected to room ${msg.roomCode}`);
         this.events.onStateChange?.('connecting_webrtc', 'Sender reconnected');
         break;
 
       case 'peer-joined':
         // Receiver arrived! As sender, initiate WebRTC offer
         this.remotePeerInfo = msg.receiverInfo;
+        this.logDiagnostic('signaling', 'success', `Peer connected to session: ${msg.receiverInfo?.name || 'Receiver Device'}`);
         this.events.onPeerConnected?.({ id: msg.peerId, deviceInfo: msg.receiverInfo });
         this.events.onStateChange?.('connecting_webrtc');
         await this.initiateOffer();
@@ -212,8 +312,10 @@ export class WebRTCManager {
 
       case 'peer-left':
         if (msg.isTemporary) {
+          this.logDiagnostic('signaling', 'warn', 'Sender temporarily disconnected. Waiting 120s grace period...');
           this.events.onStateChange?.('connecting_webrtc', 'Sender temporarily reconnecting...');
         } else {
+          this.logDiagnostic('signaling', 'warn', 'Peer disconnected from session');
           this.events.onPeerDisconnected?.();
           this.events.onStateChange?.('waiting_for_peer', 'Peer disconnected');
           this.cleanupPeerConnection();
@@ -224,9 +326,22 @@ export class WebRTCManager {
         await this.handleWebRTCSignal(msg.signal);
         break;
 
-      case 'error':
+      case 'error': {
+        const isExpired = msg.code === 'ROOM_EXPIRED' || msg.message?.toLowerCase().includes('expired');
+        if (isExpired && this.roomValidity) {
+          this.roomValidity.isExpired = true;
+          this.roomValidity.ttlRemainingSeconds = 0;
+          this.events.onRoomValidityUpdate?.(this.roomValidity);
+        }
+        this.logDiagnostic(
+          isExpired ? 'room' : 'signaling',
+          'error',
+          `Signaling error (${msg.code || 'UNKNOWN'}): ${msg.message || 'Error occurred'}`
+        );
         this.events.onError?.(msg.message || 'Error occurred');
+        this.emitDiagnosticUpdate();
         break;
+      }
     }
   }
 
@@ -234,6 +349,7 @@ export class WebRTCManager {
   public createRoom(files: FileItem[], customCode?: string) {
     this.filesToSend = files;
     this.role = 'sender';
+    this.startDiagnostics('Sender initiated transfer session');
     this.sendWs({
       type: 'create-room',
       customCode,
@@ -251,6 +367,8 @@ export class WebRTCManager {
   public joinRoom(roomCode: string) {
     this.role = 'receiver';
     const clean = roomCode.replace(/[^A-Za-z0-9]/g, '').trim().toUpperCase();
+    this.roomCode = clean;
+    this.startDiagnostics(`Receiver joining session ${clean}`);
     this.sendWs({
       type: 'join-room',
       roomCode: clean
@@ -317,32 +435,400 @@ export class WebRTCManager {
   private initPeerConnection() {
     this.cleanupPeerConnection();
 
+    this.logDiagnostic('ice', 'info', 'Initializing RTCPeerConnection with STUN configuration...');
     this.pc = new RTCPeerConnection(RTC_CONFIG);
 
+    // ICE Candidate Gathering listener
     this.pc.onicecandidate = (event) => {
       if (event.candidate) {
+        const c = event.candidate;
+        let candidateType: 'host' | 'srflx' | 'relay' | 'prflx' | 'unknown' = 'unknown';
+        if (c.type) {
+          candidateType = c.type as any;
+        } else if (c.candidate) {
+          const match = c.candidate.match(/typ\s+(\w+)/);
+          if (match) candidateType = match[1] as any;
+        }
+
+        const candidateInfo: CandidateInfo = {
+          id: Math.random().toString(36).substring(2, 9),
+          type: candidateType,
+          protocol: ((c.protocol || 'udp') as string).toLowerCase() as any,
+          address: c.address || (c as any).ip,
+          port: c.port || undefined,
+          priority: c.priority || undefined,
+          timestamp: Date.now()
+        };
+
+        this.candidates.push(candidateInfo);
+
+        this.logDiagnostic(
+          'gathering',
+          'info',
+          `Gathered ${candidateType.toUpperCase()} candidate (${(c.protocol || 'UDP').toUpperCase()}${c.port ? ` port ${c.port}` : ''})`,
+          { type: candidateType, protocol: c.protocol, port: c.port }
+        );
+
         this.sendWs({
           type: 'signal',
           signal: { type: 'candidate', candidate: event.candidate }
         });
+        this.emitDiagnosticUpdate();
+      } else {
+        this.logDiagnostic('gathering', 'info', 'ICE candidate gathering received end-of-candidates null marker.');
+        this.emitDiagnosticUpdate();
       }
     };
 
+    // ICE Gathering State Transitions
+    this.pc.onicegatheringstatechange = () => {
+      const state = this.pc?.iceGatheringState || 'new';
+      let level: 'info' | 'warn' | 'error' | 'success' = 'info';
+      let desc = `ICE Gathering state: ${state}`;
+
+      if (state === 'gathering') {
+        this.gatheringStartTime = Date.now();
+        level = 'info';
+        desc = 'ICE Gathering Cycle Active: Querying local network interfaces and STUN servers...';
+      } else if (state === 'complete') {
+        this.gatheringCompleteTime = Date.now();
+        const duration = this.gatheringStartTime 
+          ? (this.gatheringCompleteTime - this.gatheringStartTime) 
+          : 0;
+        level = 'success';
+        desc = `ICE Gathering Cycle Complete in ${duration}ms (${this.candidates.length} total candidates discovered).`;
+      }
+
+      this.logDiagnostic('gathering', level, desc, { gatheringState: state, candidatesCount: this.candidates.length });
+      this.emitDiagnosticUpdate();
+    };
+
+    // ICE Connection State Transitions
+    this.pc.oniceconnectionstatechange = () => {
+      const state = this.pc?.iceConnectionState || 'new';
+      let level: 'info' | 'warn' | 'error' | 'success' = 'info';
+      let desc = `ICE Connection state changed to: ${state}`;
+
+      switch (state) {
+        case 'checking':
+          level = 'info';
+          desc = 'ICE Checking: Verifying candidate connectivity pairs with remote peer...';
+          break;
+        case 'connected':
+          level = 'success';
+          desc = 'ICE Connected: Transport pathway established. Direct P2P packet exchange active!';
+          break;
+        case 'completed':
+          level = 'success';
+          desc = 'ICE Completed: Peer candidate pair finalized.';
+          break;
+        case 'failed':
+          level = 'error';
+          desc = 'ICE Failed: No viable candidate pair found. NAT traversal was blocked (symmetric NAT, guest isolation, or firewall).';
+          break;
+        case 'disconnected':
+          level = 'warn';
+          desc = 'ICE Disconnected: Network connectivity temporarily interrupted.';
+          break;
+        case 'closed':
+          level = 'info';
+          desc = 'ICE Closed.';
+          break;
+      }
+
+      this.logDiagnostic('ice', level, desc, { iceConnectionState: state });
+      this.emitDiagnosticUpdate();
+    };
+
+    // Peer Connection State Transitions
     this.pc.onconnectionstatechange = () => {
       const state = this.pc?.connectionState;
+      const level = state === 'connected' ? 'success' : (state === 'failed' || state === 'disconnected') ? 'error' : 'info';
+      this.logDiagnostic('ice', level, `PeerConnection state: ${state}`);
+
       if (state === 'connected') {
         this.events.onStateChange?.('peer_connected');
       } else if (state === 'disconnected' || state === 'failed') {
         this.events.onStateChange?.('disconnected', 'WebRTC connection interrupted');
       }
+      this.emitDiagnosticUpdate();
     };
 
     // If receiver, handle incoming data channel
     if (this.role === 'receiver') {
       this.pc.ondatachannel = (event) => {
+        this.logDiagnostic('datachannel', 'success', `Received incoming DataChannel: ${event.channel.label}`);
         this.setupDataChannel(event.channel);
       };
     }
+  }
+
+  // ==========================================
+  // CONNECTION DIAGNOSTICS & ICE MONITORING (INITIAL 30s)
+  // ==========================================
+
+  public startDiagnostics(reason = 'Initial 30s connection evaluation') {
+    if (this.diagnosticTimer) {
+      clearInterval(this.diagnosticTimer);
+    }
+    this.diagnosticSessionId = `diag-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    this.diagnosticStartedAt = Date.now();
+    this.isDiagnosticActive = true;
+    this.diagnosticLogs = [];
+    this.candidates = [];
+    this.gatheringStartTime = null;
+    this.gatheringCompleteTime = null;
+    this.pendingPings.clear();
+
+    this.logDiagnostic(
+      'signaling',
+      'info',
+      `Diagnostic monitoring started (${reason}). Measuring ICE connection state transitions, gathering cycles, and signal latency.`,
+      { sessionId: this.diagnosticSessionId, role: this.role, roomCode: this.roomCode }
+    );
+
+    // Initial ping probe for immediate signal latency measurement
+    this.sendPingProbe();
+
+    // 1-second interval for 30s diagnostic window
+    this.diagnosticTimer = setInterval(() => {
+      const elapsed = Date.now() - this.diagnosticStartedAt;
+      if (elapsed >= this.diagnosticWindowDurationMs) {
+        if (this.isDiagnosticActive) {
+          this.isDiagnosticActive = false;
+          const avg = this.getAverageLatency();
+          this.logDiagnostic(
+            'ice',
+            'info',
+            `Completed 30-second initial connection diagnostic window. Final state: ICE=${this.pc?.iceConnectionState || 'none'}, Candidates=${this.candidates.length}, Avg signal latency=${avg !== null ? `${avg}ms` : 'N/A'}.`
+          );
+        }
+        clearInterval(this.diagnosticTimer);
+        this.diagnosticTimer = null;
+      } else {
+        // Send a ping probe every 2 seconds during the initial 30s window
+        if (Math.floor(elapsed / 1000) % 2 === 0) {
+          this.sendPingProbe();
+        }
+      }
+      this.emitDiagnosticUpdate();
+    }, 1000);
+
+    this.emitDiagnosticUpdate();
+  }
+
+  public logDiagnostic(
+    category: 'ice' | 'gathering' | 'latency' | 'signaling' | 'datachannel' | 'room',
+    level: 'info' | 'warn' | 'error' | 'success',
+    message: string,
+    details?: Record<string, any>
+  ) {
+    const elapsed = this.diagnosticStartedAt > 0 ? Date.now() - this.diagnosticStartedAt : 0;
+    const entry: DiagnosticLogEntry = {
+      id: Math.random().toString(36).substring(2, 9),
+      timestamp: Date.now(),
+      elapsedMs: elapsed,
+      category,
+      level,
+      message,
+      details
+    };
+
+    this.diagnosticLogs.push(entry);
+    if (this.diagnosticLogs.length > 250) {
+      this.diagnosticLogs.shift();
+    }
+
+    const color = level === 'error' ? '#EA4335' : level === 'warn' ? '#FBBC05' : level === 'success' ? '#34A853' : '#1a73e8';
+    console.log(
+      `%c[InstaSend Diag +${(elapsed / 1000).toFixed(1)}s] [${category.toUpperCase()}] ${message}`,
+      `color: ${color}; font-weight: bold;`,
+      details || ''
+    );
+  }
+
+  public sendPingProbe() {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const t = Date.now();
+    this.pendingPings.set(t, t);
+    // Cleanup old pings older than 10 seconds
+    const cutoff = t - 10000;
+    for (const [key] of this.pendingPings) {
+      if (key < cutoff) this.pendingPings.delete(key);
+    }
+    this.sendWs({ type: 'ping', t });
+  }
+
+  public getAverageLatency(): number | null {
+    if (this.signalLatencyHistory.length === 0) return null;
+    const sum = this.signalLatencyHistory.reduce((acc, cur) => acc + cur.latencyMs, 0);
+    return Math.round(sum / this.signalLatencyHistory.length);
+  }
+
+  public getCandidateCounts() {
+    let host = 0;
+    let srflx = 0;
+    let relay = 0;
+    let prflx = 0;
+
+    for (const c of this.candidates) {
+      if (c.type === 'host') host++;
+      else if (c.type === 'srflx') srflx++;
+      else if (c.type === 'relay') relay++;
+      else if (c.type === 'prflx') prflx++;
+    }
+
+    return {
+      host,
+      srflx,
+      relay,
+      prflx,
+      total: this.candidates.length
+    };
+  }
+
+  public getDiagnosticReport(): DiagnosticReport {
+    const now = Date.now();
+    const elapsed = this.diagnosticStartedAt > 0 ? now - this.diagnosticStartedAt : 0;
+    const remainingSeconds = Math.max(0, Math.ceil((this.diagnosticWindowDurationMs - elapsed) / 1000));
+    const isWindowActive = this.diagnosticStartedAt > 0 && elapsed < this.diagnosticWindowDurationMs;
+
+    const latencies = this.signalLatencyHistory.map(h => h.latencyMs);
+    const avgLatency = this.getAverageLatency();
+    const minLatency = latencies.length > 0 ? Math.min(...latencies) : null;
+    const maxLatency = latencies.length > 0 ? Math.max(...latencies) : null;
+    const currentLatency = latencies.length > 0 ? latencies[latencies.length - 1] : null;
+
+    const candidateCounts = this.getCandidateCounts();
+    const gatheringDuration = (this.gatheringCompleteTime && this.gatheringStartTime)
+      ? (this.gatheringCompleteTime - this.gatheringStartTime)
+      : null;
+
+    const summaryDiagnosis = this.computeDiagnosis(
+      candidateCounts,
+      avgLatency,
+      this.pc?.iceConnectionState || 'new',
+      isWindowActive
+    );
+
+    return {
+      sessionId: this.diagnosticSessionId || 'init',
+      startedAt: this.diagnosticStartedAt,
+      elapsedMs: elapsed,
+      isWindowActive,
+      remainingWindowSeconds: remainingSeconds,
+      iceConnectionState: this.pc?.iceConnectionState || 'new',
+      iceGatheringState: this.pc?.iceGatheringState || 'new',
+      peerConnectionState: (this.pc?.connectionState as any) || 'uninitialized',
+      signalLatencyMs: currentLatency,
+      avgSignalLatencyMs: avgLatency,
+      minSignalLatencyMs: minLatency,
+      maxSignalLatencyMs: maxLatency,
+      signalLatencyHistory: [...this.signalLatencyHistory],
+      candidates: [...this.candidates],
+      candidateCounts,
+      gatheringDurationMs: gatheringDuration,
+      logs: [...this.diagnosticLogs],
+      summaryDiagnosis
+    };
+  }
+
+  private computeDiagnosis(
+    candidateCounts: { host: number; srflx: number; relay: number; total: number },
+    avgLatency: number | null,
+    iceState: RTCIceConnectionState,
+    isWindowActive: boolean
+  ) {
+    if (this.roomValidity?.isExpired || (this.roomValidity && this.roomValidity.ttlRemainingSeconds <= 0)) {
+      return {
+        status: 'critical' as const,
+        title: 'Session Code Expired',
+        description: 'The 10-minute session validity period has ended. The signaling server has freed this 6-digit code.',
+        actionableAdvice: 'Ask the sender to generate a fresh 6-digit code or link.'
+      };
+    }
+
+    if (iceState === 'connected' || iceState === 'completed') {
+      return {
+        status: 'healthy' as const,
+        title: 'WebRTC P2P Connection Established',
+        description: `Direct encrypted SCTP data channel active over DTLS. Signal latency is optimal (${avgLatency !== null ? `${avgLatency}ms` : '<20ms'}).`,
+        actionableAdvice: 'Transfer streams directly browser-to-browser with zero server intermediation.'
+      };
+    }
+
+    if (iceState === 'failed') {
+      return {
+        status: 'critical' as const,
+        title: 'Direct P2P Connectivity Blocked',
+        description: 'ICE candidate negotiation failed. Both peers attempted to connect, but symmetric NAT, carrier-grade NAT, or enterprise firewall prevented direct UDP packet exchange.',
+        actionableAdvice: 'Ensure both devices are connected to the same local Wi-Fi SSID, or use the direct LAN file fallback download button.'
+      };
+    }
+
+    if (avgLatency !== null && avgLatency > 300) {
+      return {
+        status: 'warning' as const,
+        title: 'High Signaling Latency Detected',
+        description: `Signaling server round-trip latency is high (${avgLatency}ms). Slow signaling handshakes may cause room join requests to time out before candidates can pair, making codes appear as expired.`,
+        actionableAdvice: 'Check for network congestion, VPN interference, or weak Wi-Fi signal.'
+      };
+    }
+
+    if (this.pc?.iceGatheringState === 'complete' && candidateCounts.srflx === 0 && candidateCounts.host > 0) {
+      return {
+        status: 'warning' as const,
+        title: 'Local-Only Host Candidates Gathered',
+        description: 'No STUN reflexive (public IP) candidates were gathered. If devices are on different subnets (e.g. mobile 4G/5G vs home Wi-Fi), direct connection cannot be established.',
+        actionableAdvice: 'Connect both devices to the same Wi-Fi network, or verify public internet access to STUN servers.'
+      };
+    }
+
+    if (isWindowActive) {
+      return {
+        status: 'investigating' as const,
+        title: '30-Second Diagnostic Analysis Active',
+        description: `Evaluating ICE gathering cycles (${candidateCounts.total} candidates discovered), signaling latency (${avgLatency !== null ? `${avgLatency}ms` : 'sampling'}), and peer handshake.`,
+        actionableAdvice: 'Keep this browser tab in the foreground while the WebRTC handshake completes.'
+      };
+    }
+
+    return {
+      status: 'investigating' as const,
+      title: 'Awaiting Peer Connection',
+      description: 'Listening for incoming peer signaling messages or candidate exchanges.',
+      actionableAdvice: 'Verify the sender has this tab open and the room code matches.'
+    };
+  }
+
+  private emitDiagnosticUpdate() {
+    const report = this.getDiagnosticReport();
+    this.events.onDiagnosticUpdate?.(report);
+    for (const listener of this.diagnosticListeners) {
+      try {
+        listener(report);
+      } catch (e) {
+        console.error('Error in diagnostic listener:', e);
+      }
+    }
+  }
+
+  public subscribeDiagnostics(listener: (report: DiagnosticReport) => void): () => void {
+    this.diagnosticListeners.push(listener);
+    listener(this.getDiagnosticReport());
+    return () => {
+      this.diagnosticListeners = this.diagnosticListeners.filter(l => l !== listener);
+    };
+  }
+
+  public setRoomValidity(validity: RoomValidityInfo) {
+    this.roomValidity = validity;
+    this.events.onRoomValidityUpdate?.(validity);
+    this.emitDiagnosticUpdate();
+  }
+
+  public getRoomValidity(): RoomValidityInfo | null {
+    return this.roomValidity;
   }
 
   // Sender creates Offer
@@ -903,6 +1389,10 @@ export class WebRTCManager {
   public destroy() {
     this.resetSession();
     clearInterval(this.pingInterval);
+    if (this.diagnosticTimer) {
+      clearInterval(this.diagnosticTimer);
+      this.diagnosticTimer = null;
+    }
     if (this.ws) {
       this.ws.close();
       this.ws = null;

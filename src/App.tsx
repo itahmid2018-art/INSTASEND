@@ -44,7 +44,9 @@ import {
   ChatMessage, 
   HistoryRecord,
   UserProfile,
-  ManagedFile
+  ManagedFile,
+  DiagnosticReport,
+  RoomValidityInfo
 } from './types.ts';
 
 export default function App() {
@@ -59,6 +61,8 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [radarPeers, setRadarPeers] = useState<{ id: string; deviceInfo: DeviceInfo }[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [diagnosticReport, setDiagnosticReport] = useState<DiagnosticReport | null>(null);
+  const [roomValidity, setRoomValidity] = useState<RoomValidityInfo | null>(null);
 
   // User Profile & Auth
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
@@ -451,6 +455,12 @@ export default function App() {
       onError: (msg) => {
         setErrorMessage(msg);
         sound.playError();
+      },
+      onDiagnosticUpdate: (report) => {
+        setDiagnosticReport(report);
+      },
+      onRoomValidityUpdate: (validity) => {
+        setRoomValidity(validity);
       }
     });
 
@@ -470,6 +480,8 @@ export default function App() {
     setReceivedFiles([]);
     setChatMessages([]);
     setErrorMessage(null);
+    setDiagnosticReport(null);
+    setRoomValidity(null);
   };
 
   const handleSendChat = (text: string) => {
@@ -708,6 +720,8 @@ export default function App() {
                     setOfflineModalMode('receive');
                     setIsOfflineModalOpen(true);
                   }}
+                  diagnosticReport={diagnosticReport}
+                  roomValidity={roomValidity}
                 />
               )}
             </div>
