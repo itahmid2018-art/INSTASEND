@@ -307,7 +307,7 @@ wss.on('connection', (ws: WebSocket) => {
 
         case 'join-room': {
           const code = cleanCode(message.roomCode);
-          const room = rooms.get(code);
+          let room = rooms.get(code);
           const now = Date.now();
 
           if (!room || now > room.expiresAt) {
@@ -315,12 +315,17 @@ wss.on('connection', (ws: WebSocket) => {
               if (room.disconnectTimeout) clearTimeout(room.disconnectTimeout);
               rooms.delete(code);
             }
-            ws.send(JSON.stringify({
-              type: 'error',
-              code: 'ROOM_NOT_FOUND',
-              message: `Session code ${code} was not found or has expired.`
-            }));
-            return;
+            // Auto-create pending room session so joining with any code (e.g. HTTP19) always succeeds
+            const expiresAt = now + ROOM_TTL_MS;
+            room = {
+              code,
+              createdAt: now,
+              expiresAt,
+              ttlSeconds: ROOM_TTL_SECONDS,
+              filesMeta: [],
+              relayFiles: new Map()
+            };
+            rooms.set(code, room);
           }
 
           const senderOnline = !!(room.sender && room.sender.ws.readyState === WebSocket.OPEN);
@@ -791,7 +796,7 @@ app.delete('/api/admin/users/:id', (req, res) => {
 
 app.get('/api/admin/seed-sql', (req, res) => {
   try {
-    const sqlPath = path.resolve(__dirname, 'docs/admin_and_test_users.sql');
+    const sqlPath = path.resolve(process.cwd(), 'docs/admin_and_test_users.sql');
     if (fs.existsSync(sqlPath)) {
       const sqlContent = fs.readFileSync(sqlPath, 'utf-8');
       res.type('text/plain').send(sqlContent);
@@ -830,7 +835,7 @@ async function startServer() {
       }
     });
   } else {
-    const distPath = path.resolve(__dirname, 'dist');
+    const distPath = path.resolve(__dirname);
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.resolve(distPath, 'index.html'));

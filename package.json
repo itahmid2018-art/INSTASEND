@@ -4,8 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "esbuild server.ts --platform=node --format=esm --packages=external --outfile=dist/server.js && node -e \"import('fs').then(fs => fs.cpSync('server', 'dist/server', {recursive: true}))\" && node dist/server.js",
-    "build": "vite build && esbuild server.ts --platform=node --format=esm --packages=external --outfile=dist/server.js && node -e \"import('fs').then(fs => fs.cpSync('server', 'dist/server', {recursive: true}))\"",
+    "dev": "tsx watch server.ts",
+    "build": "vite build && esbuild server.ts --platform=node --format=esm --packages=external --outfile=dist/server.js",
     "start": "node dist/server.js",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
