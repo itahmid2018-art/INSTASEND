@@ -816,7 +816,7 @@ async function startServer() {
         middlewareMode: true,
         host: '0.0.0.0',
         port: PORT,
-        hmr: process.env.ENABLE_HMR === 'true' ? true : false
+        hmr: false
       },
       appType: 'spa'
     });
@@ -841,6 +841,16 @@ async function startServer() {
       res.sendFile(path.resolve(distPath, 'index.html'));
     });
   }
+
+  server.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n[Server Error] Port ${PORT} is already in use by another process.`);
+      console.error(`Please terminate any existing Node process running on port ${PORT} (e.g., npx kill-port ${PORT} or stop the background dev process) and try running 'npm run dev' again.\n`);
+      process.exit(1);
+    } else {
+      console.error('[Server Error]', err);
+    }
+  });
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`InstaSend server running on http://0.0.0.0:${PORT}`);
