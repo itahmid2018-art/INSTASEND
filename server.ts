@@ -4,6 +4,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import os from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -61,20 +62,42 @@ interface Peer {
   };
 }
 
+export interface RelayFile {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  relativePath?: string;
+  chunks: Buffer[];
+  receivedBytes: number;
+  sha256?: string;
+  isComplete: boolean;
+}
+
 interface Room {
   code: string;
   sender?: Peer;
   receiver?: Peer;
   createdAt: number;
+  disconnectedAt?: number;
+  disconnectTimeout?: NodeJS.Timeout;
   filesMeta?: {
+    id?: string;
     name: string;
     size: number;
     type: string;
+    relativePath?: string;
   }[];
+  relayFiles?: Map<string, RelayFile>;
 }
 
 const peers = new Map<string, Peer>();
 const rooms = new Map<string, Room>();
+
+// Helper to normalize room code (remove spaces, symbols, uppercase)
+function cleanCode(code: string): string {
+  return (code || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().trim();
+}
 
 // Helper to generate a friendly 6-character room code (e.g. HEX729 or 6 alphanumeric)
 function generateRoomCode(): string {
@@ -91,6 +114,7 @@ setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms.entries()) {
     if (now - room.createdAt > 4 * 60 * 60 * 1000) {
+      if (room.disconnectTimeout) clearTimeout(room.disconnectTimeout);
       rooms.delete(code);
     }
   }
@@ -130,11 +154,44 @@ wss.on('connection', (ws: WebSocket) => {
         }
 
         case 'create-room': {
-          const roomCode = message.customCode ? message.customCode.toUpperCase().trim() : generateRoomCode();
-          
-          // If code already taken and active sender exists, generate new
-          const actualCode = (rooms.has(roomCode) && rooms.get(roomCode)?.sender) ? generateRoomCode() : roomCode;
-          
+          const requestedCode = cleanCode(message.customCode);
+          let actualCode = requestedCode || generateRoomCode();
+
+          const existingRoom = rooms.get(actualCode);
+          if (existingRoom) {
+            // If sender is re-creating their room or reclaiming after brief disconnect
+            if (existingRoom.disconnectTimeout) {
+              clearTimeout(existingRoom.disconnectTimeout);
+              existingRoom.disconnectTimeout = undefined;
+            }
+            delete existingRoom.disconnectedAt;
+            existingRoom.sender = peer;
+            if (message.filesMeta && message.filesMeta.length > 0) {
+              existingRoom.filesMeta = message.filesMeta;
+            }
+            peer.roomCode = actualCode;
+            peer.role = 'sender';
+
+            ws.send(JSON.stringify({
+              type: 'room-created',
+              roomCode: actualCode,
+              filesMeta: existingRoom.filesMeta || []
+            }));
+
+            if (existingRoom.receiver && existingRoom.receiver.ws.readyState === WebSocket.OPEN) {
+              existingRoom.receiver.ws.send(JSON.stringify({
+                type: 'sender-reconnected',
+                roomCode: actualCode
+              }));
+              peer.ws.send(JSON.stringify({
+                type: 'peer-joined',
+                peerId: existingRoom.receiver.id,
+                receiverInfo: existingRoom.receiver.deviceInfo || { name: 'Receiver Device' }
+              }));
+            }
+            break;
+          }
+
           peer.roomCode = actualCode;
           peer.role = 'sender';
 
@@ -142,7 +199,8 @@ wss.on('connection', (ws: WebSocket) => {
             code: actualCode,
             sender: peer,
             createdAt: Date.now(),
-            filesMeta: message.filesMeta || []
+            filesMeta: message.filesMeta || [],
+            relayFiles: new Map()
           });
 
           ws.send(JSON.stringify({
@@ -153,8 +211,63 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         }
 
+        case 'reclaim-room': {
+          const code = cleanCode(message.roomCode);
+          let room = rooms.get(code);
+
+          if (room) {
+            if (room.disconnectTimeout) {
+              clearTimeout(room.disconnectTimeout);
+              room.disconnectTimeout = undefined;
+            }
+            delete room.disconnectedAt;
+            room.sender = peer;
+            peer.roomCode = code;
+            peer.role = 'sender';
+            if (message.filesMeta && message.filesMeta.length > 0) {
+              room.filesMeta = message.filesMeta;
+            }
+
+            ws.send(JSON.stringify({
+              type: 'room-created',
+              roomCode: code,
+              filesMeta: room.filesMeta || []
+            }));
+
+            if (room.receiver && room.receiver.ws.readyState === WebSocket.OPEN) {
+              room.receiver.ws.send(JSON.stringify({
+                type: 'sender-reconnected',
+                roomCode: code
+              }));
+              peer.ws.send(JSON.stringify({
+                type: 'peer-joined',
+                peerId: room.receiver.id,
+                receiverInfo: room.receiver.deviceInfo || { name: 'Receiver Device' }
+              }));
+            }
+          } else if (code) {
+            // Re-create room with the same code so sender's QR code & links stay valid
+            peer.roomCode = code;
+            peer.role = 'sender';
+            rooms.set(code, {
+              code,
+              sender: peer,
+              createdAt: Date.now(),
+              filesMeta: message.filesMeta || [],
+              relayFiles: new Map()
+            });
+
+            ws.send(JSON.stringify({
+              type: 'room-created',
+              roomCode: code,
+              filesMeta: message.filesMeta || []
+            }));
+          }
+          break;
+        }
+
         case 'join-room': {
-          const code = (message.roomCode || '').toUpperCase().trim();
+          const code = cleanCode(message.roomCode);
           const room = rooms.get(code);
 
           if (!room) {
@@ -166,14 +279,7 @@ wss.on('connection', (ws: WebSocket) => {
             return;
           }
 
-          if (!room.sender || room.sender.ws.readyState !== WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              type: 'error',
-              code: 'SENDER_DISCONNECTED',
-              message: 'The sender is no longer connected to this session.'
-            }));
-            return;
-          }
+          const senderOnline = !!(room.sender && room.sender.ws.readyState === WebSocket.OPEN);
 
           peer.roomCode = code;
           peer.role = 'receiver';
@@ -183,16 +289,19 @@ wss.on('connection', (ws: WebSocket) => {
           ws.send(JSON.stringify({
             type: 'room-joined',
             roomCode: code,
-            senderInfo: room.sender.deviceInfo || { name: 'Sender Device' },
+            senderOnline,
+            senderInfo: room.sender?.deviceInfo || { name: 'Sender Device' },
             filesMeta: room.filesMeta || []
           }));
 
-          // Notify sender that receiver has arrived
-          room.sender.ws.send(JSON.stringify({
-            type: 'peer-joined',
-            peerId: peer.id,
-            receiverInfo: peer.deviceInfo || { name: 'Receiver Device' }
-          }));
+          // Notify sender that receiver has arrived (if online)
+          if (senderOnline && room.sender) {
+            room.sender.ws.send(JSON.stringify({
+              type: 'peer-joined',
+              peerId: peer.id,
+              receiverInfo: peer.deviceInfo || { name: 'Receiver Device' }
+            }));
+          }
           break;
         }
 
@@ -242,7 +351,7 @@ wss.on('connection', (ws: WebSocket) => {
         }
 
         case 'leave-room': {
-          leaveRoom(peer);
+          leaveRoom(peer, true); // Explicit user leave -> clean immediately
           break;
         }
       }
@@ -252,13 +361,13 @@ wss.on('connection', (ws: WebSocket) => {
   });
 
   ws.on('close', () => {
-    leaveRoom(peer);
+    leaveRoom(peer, false); // Transient disconnect -> 120s grace period for sender
     peers.delete(peerId);
     broadcastRadarPeers();
   });
 });
 
-function leaveRoom(peer: Peer) {
+function leaveRoom(peer: Peer, isExplicitLeave = false) {
   if (!peer.roomCode) return;
   const room = rooms.get(peer.roomCode);
   if (!room) return;
@@ -267,12 +376,27 @@ function leaveRoom(peer: Peer) {
   if (otherPeer && otherPeer.ws.readyState === WebSocket.OPEN) {
     otherPeer.ws.send(JSON.stringify({
       type: 'peer-left',
-      role: peer.role
+      role: peer.role,
+      isTemporary: !isExplicitLeave && peer.role === 'sender'
     }));
   }
 
   if (peer.role === 'sender') {
-    rooms.delete(peer.roomCode);
+    if (isExplicitLeave) {
+      if (room.disconnectTimeout) clearTimeout(room.disconnectTimeout);
+      rooms.delete(peer.roomCode);
+    } else {
+      // 120-second Grace Period: keep room alive so receiver or reconnected sender can use it!
+      room.disconnectedAt = Date.now();
+      if (room.disconnectTimeout) clearTimeout(room.disconnectTimeout);
+      const codeToDelete = peer.roomCode;
+      room.disconnectTimeout = setTimeout(() => {
+        const currentRoom = rooms.get(codeToDelete);
+        if (currentRoom && currentRoom.disconnectedAt && (!currentRoom.sender || currentRoom.sender.ws.readyState !== WebSocket.OPEN)) {
+          rooms.delete(codeToDelete);
+        }
+      }, 120 * 1000);
+    }
   } else if (room.receiver === peer) {
     room.receiver = undefined;
   }
@@ -305,8 +429,145 @@ function broadcastRadarPeers() {
 
 import { sqliteAuth } from './server/db.ts';
 
-// Express App APIs
-app.use(express.json());
+// Express App APIs - increase json payload limit for fallback relay
+app.use(express.json({ limit: '100mb' }));
+
+// Network LAN Discovery API
+app.get('/api/network-info', (req, res) => {
+  try {
+    const interfaces = os.networkInterfaces();
+    const addresses: string[] = [];
+
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name] || []) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          addresses.push(iface.address);
+        }
+      }
+    }
+
+    // Prefer private local network IPv4 ranges: 192.168.x.x, 10.x.x.x, 172.16-31.x.x
+    const lanIp = addresses.find(ip => 
+      ip.startsWith('192.168.') || 
+      ip.startsWith('10.') || 
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(ip)
+    ) || addresses[0] || '127.0.0.1';
+
+    res.json({
+      success: true,
+      lanIp,
+      addresses,
+      port: PORT,
+      hostname: os.hostname()
+    });
+  } catch (err: any) {
+    res.json({ success: false, lanIp: '127.0.0.1', addresses: ['127.0.0.1'], port: PORT });
+  }
+});
+
+// Room Existence & State Query API
+app.get('/api/room/:code', (req, res) => {
+  const code = cleanCode(req.params.code);
+  const room = rooms.get(code);
+
+  if (!room) {
+    return res.json({
+      success: false,
+      exists: false,
+      code,
+      message: `Session code ${code} was not found or has expired.`
+    });
+  }
+
+  const senderOnline = !!(room.sender && room.sender.ws.readyState === WebSocket.OPEN);
+
+  res.json({
+    success: true,
+    exists: true,
+    code: room.code,
+    createdAt: room.createdAt,
+    senderOnline,
+    disconnectedAt: room.disconnectedAt || null,
+    senderInfo: room.sender?.deviceInfo || { name: 'Sender Device' },
+    filesMeta: room.filesMeta || [],
+    relayFilesCount: room.relayFiles ? room.relayFiles.size : 0
+  });
+});
+
+// Fallback direct LAN file upload & download
+app.post('/api/transfer/:code/upload', (req, res) => {
+  try {
+    const code = cleanCode(req.params.code);
+    const room = rooms.get(code);
+    if (!room) {
+      return res.status(404).json({ success: false, message: 'Room not found' });
+    }
+    const { id, name, size, type, relativePath, base64Data, sha256 } = req.body;
+    if (!id || !name || !base64Data) {
+      return res.status(400).json({ success: false, message: 'Missing file payload data' });
+    }
+
+    if (!room.relayFiles) room.relayFiles = new Map();
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    room.relayFiles.set(id, {
+      id,
+      name,
+      size: Number(size) || buffer.length,
+      type: type || 'application/octet-stream',
+      relativePath: relativePath || name,
+      chunks: [buffer],
+      receivedBytes: buffer.length,
+      sha256,
+      isComplete: true
+    });
+
+    res.json({ success: true, fileId: id, size: buffer.length });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.get('/api/transfer/:code/files', (req, res) => {
+  const code = cleanCode(req.params.code);
+  const room = rooms.get(code);
+  if (!room || !room.relayFiles) {
+    return res.json({ success: true, files: [] });
+  }
+
+  const files = Array.from(room.relayFiles.values()).map(f => ({
+    id: f.id,
+    name: f.name,
+    size: f.size,
+    type: f.type,
+    relativePath: f.relativePath,
+    sha256: f.sha256,
+    isComplete: f.isComplete
+  }));
+
+  res.json({ success: true, files });
+});
+
+app.get('/api/transfer/:code/download/:fileId', (req, res) => {
+  const code = cleanCode(req.params.code);
+  const { fileId } = req.params;
+  const room = rooms.get(code);
+
+  if (!room || !room.relayFiles) {
+    return res.status(404).send('Session or file not found');
+  }
+
+  const file = room.relayFiles.get(fileId);
+  if (!file || !file.chunks || file.chunks.length === 0) {
+    return res.status(404).send('File not found or not yet uploaded to relay');
+  }
+
+  const combined = Buffer.concat(file.chunks);
+  res.setHeader('Content-Type', file.type || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file.name)}"`);
+  res.setHeader('Content-Length', combined.length);
+  res.send(combined);
+});
 
 app.get('/api/health', (req, res) => {
   res.json({

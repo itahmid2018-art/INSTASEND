@@ -10,8 +10,10 @@ import {
   Share2, 
   Camera, 
   AlertCircle,
-  ExternalLink
+  ExternalLink,
+  Wifi
 } from 'lucide-react';
+import { buildShareUrl, fetchNetworkInfo } from '../services/network.ts';
 
 interface QRCodeModalProps {
   isOpen: boolean;
@@ -31,12 +33,21 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
   const [copiedCode, setCopiedCode] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [lanIp, setLanIp] = useState<string>('');
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scanIntervalRef = useRef<any>(null);
 
-  const shareUrl = `${window.location.origin}/?code=${roomCode}`;
+  useEffect(() => {
+    if (isOpen) {
+      fetchNetworkInfo().then(info => {
+        if (info?.lanIp) setLanIp(info.lanIp);
+      });
+    }
+  }, [isOpen]);
+
+  const shareUrl = buildShareUrl(roomCode, lanIp);
 
   // Generate QR Code
   useEffect(() => {

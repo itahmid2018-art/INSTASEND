@@ -36,6 +36,7 @@ import { AdminPortal } from './components/AdminPortal.tsx';
 import { WebRTCManager } from './services/webrtc.ts';
 import { getLocalDeviceInfo, formatBytes } from './services/device.ts';
 import { sound } from './services/sound.ts';
+import { fetchNetworkInfo } from './services/network.ts';
 import { 
   DeviceInfo, 
   FileItem, 
@@ -251,6 +252,9 @@ export default function App() {
       setActiveView('admin');
     }
 
+    // Pre-fetch local network LAN IP for QR and LAN sharing
+    fetchNetworkInfo().catch(() => {});
+
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code') || params.get('join') || '';
     if (code) {
@@ -296,7 +300,22 @@ export default function App() {
     localStorage.removeItem('instasend_history');
   };
 
-  // Initialize WebRTC Manager
+  // Stable state refs to prevent destroying WebRTCManager on every render/state change
+  const roomCodeRef = useRef<string | null>(null);
+  const remotePeerInfoRef = useRef<DeviceInfo | null>(null);
+  const metricsRef = useRef<TransferMetrics | null>(null);
+  const currentUserRef = useRef<UserProfile | null>(currentUser);
+  const activeTabRef = useRef<'send' | 'receive' | 'securenote'>(activeTab);
+  const managedFilesRef = useRef<ManagedFile[]>(managedFiles);
+
+  useEffect(() => { roomCodeRef.current = roomCode; }, [roomCode]);
+  useEffect(() => { remotePeerInfoRef.current = remotePeerInfo; }, [remotePeerInfo]);
+  useEffect(() => { metricsRef.current = metrics; }, [metrics]);
+  useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+  useEffect(() => { managedFilesRef.current = managedFiles; }, [managedFiles]);
+
+  // Initialize WebRTC Manager ONCE on mount
   useEffect(() => {
     const manager = new WebRTCManager({
       onStateChange: (state) => {
@@ -314,7 +333,7 @@ export default function App() {
         setErrorMessage(null);
         if (filesMeta && filesMeta.length > 0) {
           setReceivedFiles(filesMeta.map((f: any) => ({
-            id: Math.random().toString(36).substring(2, 9),
+            id: f.id || Math.random().toString(36).substring(2, 9),
             name: f.name,
             size: f.size,
             type: f.type || 'application/octet-stream',
@@ -361,11 +380,11 @@ export default function App() {
           fileSize: fileItem.size,
           fileType: fileItem.type,
           timestamp: Date.now(),
-          roomCode: roomCode || 'DIRECT',
-          peerDeviceName: remotePeerInfo?.name || 'Sender Device',
+          roomCode: roomCodeRef.current || 'DIRECT',
+          peerDeviceName: remotePeerInfoRef.current?.name || 'Sender Device',
           sha256: fileItem.sha256,
           durationMs: 0,
-          avgSpeedBytesPerSec: metrics?.speedBytesPerSec || 0
+          avgSpeedBytesPerSec: metricsRef.current?.speedBytesPerSec || 0
         });
 
         const managedItem: ManagedFile = {
@@ -376,27 +395,30 @@ export default function App() {
           relativePath: fileItem.relativePath,
           direction: 'received',
           uploadedAt: Date.now(),
-          roomCode: roomCode || undefined,
+          roomCode: roomCodeRef.current || undefined,
           blob: fileItem.blob,
           previewUrl: fileItem.previewUrl,
           downloadsCount: 1,
           sha256: fileItem.sha256
         };
-        saveManagedFiles([managedItem, ...managedFiles.filter(m => m.id !== fileItem.id)]);
+        const currentList = managedFilesRef.current;
+        const updated = [managedItem, ...currentList.filter(m => m.id !== fileItem.id)];
+        saveManagedFiles(updated);
       },
       onTransferComplete: (completedFiles) => {
         setSessionState('completed');
-        if (currentUser) {
+        const user = currentUserRef.current;
+        if (user) {
           const totalBytes = completedFiles.reduce((acc, f) => acc + f.size, 0);
-          const bytesSent = activeTab === 'send' ? totalBytes : 0;
-          const bytesReceived = activeTab === 'receive' ? totalBytes : 0;
+          const bytesSent = activeTabRef.current === 'send' ? totalBytes : 0;
+          const bytesReceived = activeTabRef.current === 'receive' ? totalBytes : 0;
           const uploads = completedFiles.length;
 
           const updated: UserProfile = {
-            ...currentUser,
-            totalUploads: currentUser.totalUploads + uploads,
-            totalBytesSent: currentUser.totalBytesSent + bytesSent,
-            totalBytesReceived: currentUser.totalBytesReceived + bytesReceived
+            ...user,
+            totalUploads: user.totalUploads + uploads,
+            totalBytesSent: user.totalBytesSent + bytesSent,
+            totalBytesReceived: user.totalBytesReceived + bytesReceived
           };
           setCurrentUser(updated);
           localStorage.setItem('instasend_user', JSON.stringify(updated));
@@ -437,7 +459,7 @@ export default function App() {
     return () => {
       manager.destroy();
     };
-  }, [roomCode, remotePeerInfo, metrics, activeTab, currentUser, managedFiles]);
+  }, []);
 
   const handleResetSession = () => {
     webrtcRef.current?.resetSession();

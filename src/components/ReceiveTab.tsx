@@ -31,6 +31,7 @@ import { WebRTCManager } from '../services/webrtc.ts';
 import { QRCodeModal } from './QRCodeModal.tsx';
 import { SpeedChart } from './SpeedChart.tsx';
 import { SpeedGauge } from './SpeedGauge.tsx';
+import { buildShareUrl } from '../services/network.ts';
 
 interface ReceiveTabProps {
   webrtc: WebRTCManager | null;
@@ -70,13 +71,43 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
   const [chatInput, setChatInput] = useState('');
   const [isQRScannerOpen, setIsQRScannerOpen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [statusNotice, setStatusNotice] = useState<{ type: 'info' | 'warning' | 'error'; message: string } | null>(null);
+  const [isDownloadingLan, setIsDownloadingLan] = useState<string | null>(null);
 
   const copyShareLink = () => {
     if (!roomCode) return;
-    const shareUrl = `${window.location.origin}/?code=${roomCode}`;
+    const shareUrl = buildShareUrl(roomCode);
     navigator.clipboard.writeText(shareUrl);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
+  };
+
+  const checkRoomStatus = (code: string) => {
+    const clean = code.replace(/[^A-Za-z0-9]/g, '').trim().toUpperCase();
+    if (clean.length < 4) return;
+    fetch(`/api/room/${clean}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.exists) {
+          if (!data.senderOnline) {
+            setStatusNotice({
+              type: 'warning',
+              message: `Session code ${clean} active! Sender device is momentarily reconnecting, stand by...`
+            });
+          } else {
+            setStatusNotice({
+              type: 'info',
+              message: `Session ${clean} confirmed! Connecting to ${data.senderInfo?.name || 'Sender'}...`
+            });
+          }
+        } else {
+          setStatusNotice({
+            type: 'error',
+            message: `Session code ${clean} was not found or has expired. Make sure both devices are connected to the same LAN / Wi-Fi.`
+          });
+        }
+      })
+      .catch(() => {});
   };
 
   // 6 discrete character input boxes
@@ -96,6 +127,7 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
       // Automatically join session when opened via QR code scan or share link
       if (clean.length === 6 && state === 'idle' && webrtc) {
         sound.playConnect();
+        checkRoomStatus(clean);
         webrtc.joinRoom(clean);
       }
     }
@@ -144,6 +176,7 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
 
     if (fullCode.length === 6 && state === 'idle') {
       sound.playConnect();
+      checkRoomStatus(fullCode);
       webrtc?.joinRoom(fullCode);
     }
   };
@@ -170,6 +203,7 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
 
     if (clean.length === 6 && state === 'idle') {
       sound.playConnect();
+      checkRoomStatus(clean);
       webrtc?.joinRoom(clean);
     }
   };
@@ -179,11 +213,15 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
     const fullCode = charBoxes.join('');
     if (fullCode.length < 4) return;
     sound.playConnect();
+    checkRoomStatus(fullCode);
     webrtc?.joinRoom(fullCode);
   };
 
   const downloadFile = (fileItem: FileItem) => {
-    if (!fileItem.blob) return;
+    if (!fileItem.blob) {
+      downloadViaLAN(fileItem);
+      return;
+    }
     const url = URL.createObjectURL(fileItem.blob);
     const a = document.createElement('a');
     a.href = url;
@@ -192,6 +230,34 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 2000);
+  };
+
+  const downloadViaLAN = async (fileItem: FileItem) => {
+    if (!roomCode) return;
+    setIsDownloadingLan(fileItem.id);
+    try {
+      const res = await fetch(`/api/transfer/${roomCode}/download/${fileItem.id}`);
+      if (!res.ok) {
+        setStatusNotice({
+          type: 'warning',
+          message: 'Local direct download is preparing. WebRTC data stream will arrive momentarily.'
+        });
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileItem.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (e) {
+      console.error('LAN direct download error:', e);
+    } finally {
+      setIsDownloadingLan(null);
+    }
   };
 
   const downloadAllAsZip = async () => {
@@ -256,7 +322,20 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
           </p>
         </div>
 
-        {errorMessage && (
+        {statusNotice && (
+          <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
+            statusNotice.type === 'error'
+              ? 'bg-red-50 border-red-200 text-[#d93025]'
+              : statusNotice.type === 'warning'
+              ? 'bg-amber-50 border-amber-200 text-amber-800'
+              : 'bg-blue-50 border-blue-200 text-[#1a73e8]'
+          }`}>
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{statusNotice.message}</span>
+          </div>
+        )}
+
+        {errorMessage && !statusNotice && (
           <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-[#d93025] flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{errorMessage}</span>
@@ -656,9 +735,21 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
                         <span>Download</span>
                       </button>
                     ) : (
-                      <span className="text-xs font-mono text-[#1a73e8] font-bold">
-                        {file.progress}%
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-mono text-[#1a73e8] font-bold">
+                          {file.progress}%
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => downloadViaLAN(file)}
+                          disabled={isDownloadingLan === file.id}
+                          className="px-2.5 py-1 rounded-full bg-emerald-50 hover:bg-emerald-100 text-[#137333] border border-emerald-200 text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                          title="Direct LAN HTTP download fallback"
+                        >
+                          <Download className="w-3 h-3 text-[#34A853]" />
+                          <span>{isDownloadingLan === file.id ? 'Loading...' : 'LAN Direct'}</span>
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>

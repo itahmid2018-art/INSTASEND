@@ -38,6 +38,7 @@ export type WebRTCEvents = {
 
 export class WebRTCManager {
   private ws: WebSocket | null = null;
+  private wsQueue: any[] = [];
   private pc: RTCPeerConnection | null = null;
   private dataChannel: RTCDataChannel | null = null;
   private role: 'sender' | 'receiver' | null = null;
@@ -86,6 +87,14 @@ export class WebRTCManager {
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {
+        // Flush any messages queued before WebSocket opened (e.g. joinRoom called on page mount)
+        while (this.wsQueue.length > 0) {
+          const queued = this.wsQueue.shift();
+          try {
+            this.ws?.send(JSON.stringify(queued));
+          } catch {}
+        }
+
         // Announce local device info for radar & identification
         const deviceInfo = getLocalDeviceInfo();
         this.sendWs({
@@ -95,6 +104,21 @@ export class WebRTCManager {
 
         // Query active radar peers
         this.sendWs({ type: 'device-radar-query' });
+
+        // If this peer was an active sender before disconnect, reclaim the room!
+        if (this.role === 'sender' && this.roomCode) {
+          this.sendWs({
+            type: 'reclaim-room',
+            roomCode: this.roomCode,
+            filesMeta: this.filesToSend.map(f => ({
+              id: f.id,
+              name: f.name,
+              size: f.size,
+              type: f.type,
+              relativePath: f.relativePath
+            }))
+          });
+        }
 
         // Keepalive ping
         clearInterval(this.pingInterval);
@@ -135,6 +159,9 @@ export class WebRTCManager {
   private sendWs(data: any) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data));
+    } else {
+      // Queue message so it is guaranteed to be sent once connected
+      this.wsQueue.push(data);
     }
   }
 
@@ -154,6 +181,7 @@ export class WebRTCManager {
         break;
 
       case 'room-created':
+      case 'room-reclaimed':
         this.roomCode = msg.roomCode;
         this.role = 'sender';
         this.events.onRoomCreated?.(msg.roomCode);
@@ -170,6 +198,10 @@ export class WebRTCManager {
         this.initPeerConnection();
         break;
 
+      case 'sender-reconnected':
+        this.events.onStateChange?.('connecting_webrtc', 'Sender reconnected');
+        break;
+
       case 'peer-joined':
         // Receiver arrived! As sender, initiate WebRTC offer
         this.remotePeerInfo = msg.receiverInfo;
@@ -179,9 +211,13 @@ export class WebRTCManager {
         break;
 
       case 'peer-left':
-        this.events.onPeerDisconnected?.();
-        this.events.onStateChange?.('waiting_for_peer', 'Peer disconnected');
-        this.cleanupPeerConnection();
+        if (msg.isTemporary) {
+          this.events.onStateChange?.('connecting_webrtc', 'Sender temporarily reconnecting...');
+        } else {
+          this.events.onPeerDisconnected?.();
+          this.events.onStateChange?.('waiting_for_peer', 'Peer disconnected');
+          this.cleanupPeerConnection();
+        }
         break;
 
       case 'signal':
@@ -201,17 +237,66 @@ export class WebRTCManager {
     this.sendWs({
       type: 'create-room',
       customCode,
-      filesMeta: files.map(f => ({ name: f.name, size: f.size, type: f.type }))
+      filesMeta: files.map(f => ({
+        id: f.id,
+        name: f.name,
+        size: f.size,
+        type: f.type,
+        relativePath: f.relativePath
+      }))
     });
   }
 
   // Join room as Receiver
   public joinRoom(roomCode: string) {
     this.role = 'receiver';
+    const clean = roomCode.replace(/[^A-Za-z0-9]/g, '').trim().toUpperCase();
     this.sendWs({
       type: 'join-room',
-      roomCode: roomCode.trim().toUpperCase()
+      roomCode: clean
     });
+  }
+
+  // Fallback LAN HTTP file upload helper for sender
+  public async uploadToLANRelay(roomCode: string, onProgress?: (fileIndex: number, totalFiles: number) => void): Promise<boolean> {
+    try {
+      const code = roomCode.replace(/[^A-Za-z0-9]/g, '').trim().toUpperCase();
+      let index = 0;
+      for (const item of this.filesToSend) {
+        if (!item.file) continue;
+        const arrayBuf = await item.file.arrayBuffer();
+        const uint8 = new Uint8Array(arrayBuf);
+        // Convert to base64
+        let binary = '';
+        const len = uint8.byteLength;
+        const chunkSize = 8192;
+        for (let i = 0; i < len; i += chunkSize) {
+          const slice = uint8.subarray(i, Math.min(i + chunkSize, len));
+          binary += String.fromCharCode.apply(null, slice as unknown as number[]);
+        }
+        const base64Data = btoa(binary);
+
+        await fetch(`/api/transfer/${code}/upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: item.id,
+            name: item.name,
+            size: item.size,
+            type: item.type,
+            relativePath: item.relativePath,
+            base64Data,
+            sha256: item.sha256
+          })
+        });
+        index++;
+        onProgress?.(index, this.filesToSend.length);
+      }
+      return true;
+    } catch (e) {
+      console.warn('Fallback LAN relay upload failed:', e);
+      return false;
+    }
   }
 
   // Send direct invite from radar

@@ -46,6 +46,7 @@ import { QRCodeModal } from './QRCodeModal.tsx';
 import { isCompressibleTextFile } from '../services/compression.ts';
 import { SpeedChart } from './SpeedChart.tsx';
 import { SpeedGauge } from './SpeedGauge.tsx';
+import { buildShareUrl, fetchNetworkInfo } from '../services/network.ts';
 
 interface SendTabProps {
   webrtc: WebRTCManager | null;
@@ -92,6 +93,16 @@ export const SendTab: React.FC<SendTabProps> = ({
   const [isScanningFolders, setIsScanningFolders] = useState(false);
   const [isQRModalOpen, setIsQRModalOpen] = useState(false);
   const [compressTextFiles, setCompressTextFiles] = useState(true);
+  const [lanIp, setLanIp] = useState<string>('');
+
+  // Fetch local LAN network info on mount
+  useEffect(() => {
+    fetchNetworkInfo().then(info => {
+      if (info?.lanIp) {
+        setLanIp(info.lanIp);
+      }
+    });
+  }, []);
 
   // Sync compression flag to WebRTC service
   useEffect(() => {
@@ -111,24 +122,32 @@ export const SendTab: React.FC<SendTabProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
-  // Generate QR code whenever roomCode is set
+  // Generate QR code whenever roomCode is set using LAN IP
   useEffect(() => {
     if (roomCode) {
-      const shareUrl = `${window.location.origin}/?code=${roomCode}`;
-      QRCode.toDataURL(shareUrl, {
-        width: 240,
-        margin: 2,
-        color: {
-          dark: '#202124',
-          light: '#ffffff'
-        }
-      }).then(url => {
-        setQrCodeDataUrl(url);
-      }).catch(err => {
-        console.error('Error generating QR code:', err);
+      fetchNetworkInfo().then(info => {
+        const targetIp = info?.lanIp || lanIp;
+        const shareUrl = buildShareUrl(roomCode, targetIp);
+        QRCode.toDataURL(shareUrl, {
+          width: 240,
+          margin: 2,
+          color: {
+            dark: '#202124',
+            light: '#ffffff'
+          }
+        }).then(url => {
+          setQrCodeDataUrl(url);
+        }).catch(err => {
+          console.error('Error generating QR code:', err);
+        });
       });
+
+      // Also upload to fallback LAN relay in background so local HTTP download is ready
+      if (webrtc && stagedFiles.length > 0) {
+        webrtc.uploadToLANRelay(roomCode).catch(() => {});
+      }
     }
-  }, [roomCode]);
+  }, [roomCode, lanIp, webrtc, stagedFiles]);
 
   // Trigger celebration confetti when transfer is complete
   useEffect(() => {
@@ -272,7 +291,7 @@ export const SendTab: React.FC<SendTabProps> = ({
 
   const copyShareLink = () => {
     if (!roomCode) return;
-    const shareUrl = `${window.location.origin}/?code=${roomCode}`;
+    const shareUrl = buildShareUrl(roomCode, lanIp);
     navigator.clipboard.writeText(shareUrl);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
@@ -280,7 +299,7 @@ export const SendTab: React.FC<SendTabProps> = ({
 
   const shareOnWhatsApp = () => {
     if (!roomCode) return;
-    const shareUrl = `${window.location.origin}/?code=${roomCode}`;
+    const shareUrl = buildShareUrl(roomCode, lanIp);
     const fileCount = stagedFiles.length;
     const totalBytes = stagedFiles.reduce((acc, f) => acc + f.size, 0);
     const summary = fileCount > 0 ? `${fileCount} ${fileCount === 1 ? 'file' : 'files'} (${formatBytes(totalBytes)})` : 'files';
@@ -291,7 +310,7 @@ export const SendTab: React.FC<SendTabProps> = ({
 
   const shareOnTelegram = () => {
     if (!roomCode) return;
-    const shareUrl = `${window.location.origin}/?code=${roomCode}`;
+    const shareUrl = buildShareUrl(roomCode, lanIp);
     const text = `⚡ InstaSend File Transfer (Room Code: ${roomCode})`;
     const url = `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(text)}`;
     window.open(url, '_blank', 'noopener,noreferrer');
@@ -299,7 +318,7 @@ export const SendTab: React.FC<SendTabProps> = ({
 
   const handleNativeShare = async () => {
     if (!roomCode) return;
-    const shareUrl = `${window.location.origin}/?code=${roomCode}`;
+    const shareUrl = buildShareUrl(roomCode, lanIp);
     const fileCount = stagedFiles.length;
     const totalBytes = stagedFiles.reduce((acc, f) => acc + f.size, 0);
     const summary = fileCount > 0 ? `${fileCount} ${fileCount === 1 ? 'file' : 'files'} (${formatBytes(totalBytes)})` : 'files';
@@ -845,6 +864,13 @@ export const SendTab: React.FC<SendTabProps> = ({
                 {copiedCode ? <Check className="w-5 h-5 text-[#34a853]" /> : <Copy className="w-5 h-5" />}
               </button>
             </div>
+
+            {lanIp && lanIp !== '127.0.0.1' && (
+              <div className="flex items-center gap-1.5 text-xs text-[#137333] bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-full font-mono font-medium max-w-fit mx-auto md:mx-0">
+                <Wifi className="w-3.5 h-3.5 text-[#34A853] shrink-0" />
+                <span>LAN Direct: <strong>http://{lanIp}:{window.location.port || '3000'}</strong></span>
+              </div>
+            )}
 
             {/* Direct Link & Expand Action Buttons */}
             <div className="flex flex-wrap items-center gap-2 pt-1 justify-center md:justify-start">
