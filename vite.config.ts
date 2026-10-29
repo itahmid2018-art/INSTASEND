@@ -55,6 +55,9 @@ export default defineConfig(() => {
         }
       })
     ],
+    optimizeDeps: {
+      exclude: ['virtual:pwa-register', 'virtual:pwa-register/react'],
+    },
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('.', import.meta.url)),
