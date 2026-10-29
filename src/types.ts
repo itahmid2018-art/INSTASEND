@@ -179,3 +179,11 @@ export interface DiagnosticReport {
     actionableAdvice: string;
   };
 }
+
+export interface ToastNotification {
+  id: string;
+  type: 'info' | 'warning' | 'success' | 'error';
+  title: string;
+  message: string;
+  durationMs?: number;
+}

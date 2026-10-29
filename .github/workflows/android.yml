@@ -28,8 +28,19 @@ jobs:
       - name: Install Dependencies
         run: npm install --legacy-peer-deps
 
+      - name: Run Lint
+        run: npm run lint
+
       - name: Build Web App & Bundle
         run: npm run build
+
+      - name: Run Automated Test Suite
+        run: |
+          node dist/server.js &
+          SERVER_PID=$!
+          sleep 2
+          npm test
+          kill $SERVER_PID
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4

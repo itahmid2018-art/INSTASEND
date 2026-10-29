@@ -1,0 +1,42 @@
+name: CI Test & Build
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  test-and-build:
+    name: Lint, Test & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Run Type Checking & Lint
+        run: npm run lint
+
+      - name: Build Web App & Server
+        run: npm run build
+
+      - name: Run Automated Test Suite
+        run: |
+          node dist/server.js &
+          SERVER_PID=$!
+          sleep 2
+          npm test
+          kill $SERVER_PID

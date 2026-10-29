@@ -45,6 +45,7 @@ export type WebRTCEvents = {
   onError: (errorMsg: string) => void;
   onDiagnosticUpdate?: (report: DiagnosticReport) => void;
   onRoomValidityUpdate?: (validity: RoomValidityInfo) => void;
+  onToast?: (toast: { type: 'info' | 'warning' | 'success' | 'error'; title: string; message: string; durationMs?: number }) => void;
 };
 
 export class WebRTCManager {
@@ -72,6 +73,16 @@ export class WebRTCManager {
   private chatMessageTimestamps: number[] = [];
   private lastBufferWarningTime = 0;
 
+  // Auto-reconnect & Network Flicker Engine
+  private isAutoReconnecting = false;
+  private reconnectAttempts = 0;
+  private reconnectTimer: any = null;
+  private maxReconnectAttempts = 15;
+  private isExplicitlyClosed = false;
+  private lastIceConnected = false;
+  private onlineHandler: (() => void) | null = null;
+  private offlineHandler: (() => void) | null = null;
+
   // Connection Diagnostics Engine (30-second window, ICE monitoring, signal latency)
   private diagnosticSessionId = '';
   private diagnosticStartedAt = 0;
@@ -89,6 +100,7 @@ export class WebRTCManager {
 
   constructor(events: Partial<WebRTCEvents>) {
     this.events = events;
+    this.initNetworkListeners();
     this.connectSignaling();
   }
 
@@ -104,15 +116,74 @@ export class WebRTCManager {
     return this.compressTextFiles;
   }
 
-  // Connect to Signaling Server via WebSockets
-  private connectSignaling() {
+  public showToast(toast: { type: 'info' | 'warning' | 'success' | 'error'; title: string; message: string; durationMs?: number }) {
+    this.events.onToast?.(toast);
+  }
+
+  // Network online/offline event handlers for instant flicker detection
+  private initNetworkListeners() {
+    if (typeof window === 'undefined') return;
+
+    this.onlineHandler = () => {
+      this.logDiagnostic('signaling', 'info', 'Browser network connectivity restored (online event)');
+      this.showToast({
+        type: 'info',
+        title: 'Network Restored',
+        message: 'Internet connection detected. Auto-reconnecting signaling...'
+      });
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      this.connectSignaling(true);
+    };
+
+    this.offlineHandler = () => {
+      this.logDiagnostic('signaling', 'warn', 'Browser network connectivity lost (offline event)');
+      this.showToast({
+        type: 'warning',
+        title: 'Network Offline',
+        message: 'Device lost internet connection. Will auto-reconnect when back online.'
+      });
+    };
+
+    window.addEventListener('online', this.onlineHandler);
+    window.addEventListener('offline', this.offlineHandler);
+  }
+
+  // Connect to Signaling Server via WebSockets with auto-reconnect
+  private connectSignaling(forceImmediate = false) {
+    if (this.isExplicitlyClosed) return;
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws`;
 
     try {
+      if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+        if (!forceImmediate) return;
+        try { this.ws.close(); } catch {}
+      }
+
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {
+        const wasReconnecting = this.isAutoReconnecting;
+        this.isAutoReconnecting = false;
+        this.reconnectAttempts = 0;
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
+
+        if (wasReconnecting) {
+          this.logDiagnostic('signaling', 'success', 'Signaling connection successfully restored after network flicker');
+          this.showToast({
+            type: 'success',
+            title: 'Signaling Reconnected',
+            message: 'Connection to signaling server restored successfully.'
+          });
+        }
+
         // Flush any messages queued before WebSocket opened (e.g. joinRoom called on page mount)
         while (this.wsQueue.length > 0) {
           const queued = this.wsQueue.shift();
@@ -144,6 +215,27 @@ export class WebRTCManager {
               relativePath: f.relativePath
             }))
           });
+        } else if (this.role === 'receiver' && this.roomCode) {
+          // Re-join room as receiver so connection is preserved across flickers!
+          this.sendWs({
+            type: 'join-room',
+            roomCode: this.roomCode
+          });
+          if (wasReconnecting) {
+            this.showToast({
+              type: 'info',
+              title: 'Session Resumed',
+              message: `Re-joined transfer room ${this.roomCode}`
+            });
+          }
+        }
+
+        // If WebRTC peer connection was disrupted during signaling drop, attempt ICE restart
+        if (this.pc && (this.pc.iceConnectionState === 'disconnected' || this.pc.iceConnectionState === 'failed')) {
+          if (this.role === 'sender') {
+            this.logDiagnostic('ice', 'info', 'Signaling restored while ICE disconnected. Triggering ICE restart offer...');
+            this.initiateOffer(true);
+          }
         }
 
         // Keepalive ping
@@ -165,21 +257,60 @@ export class WebRTCManager {
       };
 
       this.ws.onerror = () => {
-        // Handle transient signaling WebSocket disconnects gracefully without unhandled error logs
+        this.logDiagnostic('signaling', 'warn', 'Signaling WebSocket error occurred during network change');
       };
 
       this.ws.onclose = () => {
         clearInterval(this.pingInterval);
-        // Attempt reconnect after 2 seconds if not intentionally closed
-        setTimeout(() => {
-          if (!this.roomCode || this.ws?.readyState !== WebSocket.OPEN) {
-            this.connectSignaling();
-          }
-        }, 2500);
+        if (this.isExplicitlyClosed) return;
+
+        // Auto-reconnect on temporary signaling drop / network flicker
+        this.handleSignalingDisconnect();
       };
     } catch (err: any) {
       this.events.onError?.('Could not connect to signaling server: ' + err.message);
+      this.handleSignalingDisconnect();
     }
+  }
+
+  // Handle temporary signaling disconnection with exponential backoff & toasts
+  private handleSignalingDisconnect() {
+    if (this.isExplicitlyClosed) return;
+
+    if (!this.isAutoReconnecting) {
+      this.isAutoReconnecting = true;
+      this.logDiagnostic('signaling', 'warn', 'Temporary signaling disconnection detected. Auto-reconnect triggered.');
+      this.showToast({
+        type: 'warning',
+        title: 'Signaling Disconnected',
+        message: 'Network flicker detected. Automatically reconnecting...',
+        durationMs: 4000
+      });
+    }
+
+    this.reconnectAttempts++;
+    if (this.reconnectAttempts > this.maxReconnectAttempts) {
+      this.logDiagnostic('signaling', 'error', `Exceeded maximum auto-reconnect attempts (${this.maxReconnectAttempts})`);
+      this.showToast({
+        type: 'error',
+        title: 'Reconnection Failed',
+        message: 'Unable to reach signaling server. Please check your network connection.'
+      });
+      this.isAutoReconnecting = false;
+      return;
+    }
+
+    // Exponential backoff: 1s, 1.5s, 2.25s, 3.4s... capped at 8s
+    const backoffMs = Math.min(1000 * Math.pow(1.5, Math.max(0, this.reconnectAttempts - 1)), 8000);
+    this.logDiagnostic('signaling', 'info', `Auto-reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${Math.round(backoffMs)}ms`);
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+    }
+
+    this.reconnectTimer = setTimeout(() => {
+      this.connectSignaling();
+    }, backoffMs);
   }
 
   private sendWs(data: any) {
@@ -555,22 +686,46 @@ export class WebRTCManager {
         case 'connected':
           level = 'success';
           desc = 'ICE Connected: Transport pathway established. Direct P2P packet exchange active!';
+          if (!this.lastIceConnected) {
+            this.lastIceConnected = true;
+            if (this.isAutoReconnecting || this.reconnectAttempts > 0) {
+              this.showToast({
+                type: 'success',
+                title: 'P2P Connection Restored',
+                message: 'Direct WebRTC data channel back online.'
+              });
+            }
+          }
           break;
         case 'completed':
           level = 'success';
           desc = 'ICE Completed: Peer candidate pair finalized.';
+          this.lastIceConnected = true;
           break;
         case 'failed':
           level = 'error';
           desc = 'ICE Failed: No viable candidate pair found. NAT traversal was blocked (symmetric NAT, guest isolation, or firewall).';
+          this.lastIceConnected = false;
+          this.showToast({
+            type: 'error',
+            title: 'P2P Connection Interrupted',
+            message: 'Direct data channel failed. Attempting renegotiation or direct LAN fallback.'
+          });
           break;
         case 'disconnected':
           level = 'warn';
           desc = 'ICE Disconnected: Network connectivity temporarily interrupted.';
+          this.lastIceConnected = false;
+          this.showToast({
+            type: 'warning',
+            title: 'P2P Channel Interrupted',
+            message: 'Network flicker detected on direct data channel. Re-negotiating...'
+          });
           break;
         case 'closed':
           level = 'info';
           desc = 'ICE Closed.';
+          this.lastIceConnected = false;
           break;
       }
 
@@ -869,24 +1024,32 @@ export class WebRTCManager {
     return this.roomValidity;
   }
 
-  // Sender creates Offer
-  private async initiateOffer() {
-    this.initPeerConnection();
+  // Sender creates Offer (supports iceRestart for auto-reconnect)
+  private async initiateOffer(iceRestart = false) {
+    if (!this.pc) {
+      this.initPeerConnection();
+    }
     if (!this.pc) return;
 
-    // Create reliable data channel for transfers
-    const channel = this.pc.createDataChannel('hexasend-data', {
-      ordered: true
-    });
-    this.setupDataChannel(channel);
+    // Create reliable data channel for transfers if needed
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+      try {
+        const channel = this.pc.createDataChannel('hexasend-data', {
+          ordered: true
+        });
+        this.setupDataChannel(channel);
+      } catch (e) {
+        console.warn('DataChannel creation on offer:', e);
+      }
+    }
 
     try {
-      const offer = await this.pc.createOffer();
+      const offer = await this.pc.createOffer({ iceRestart });
       await this.pc.setLocalDescription(offer);
 
       this.sendWs({
         type: 'signal',
-        signal: { type: 'offer', sdp: offer }
+        signal: { type: 'offer', sdp: offer, iceRestart }
       });
     } catch (err: any) {
       this.events.onError?.('Failed to create WebRTC offer: ' + err.message);
@@ -1425,6 +1588,19 @@ export class WebRTCManager {
   }
 
   public destroy() {
+    this.isExplicitlyClosed = true;
+    if (this.onlineHandler && typeof window !== 'undefined') {
+      window.removeEventListener('online', this.onlineHandler);
+      this.onlineHandler = null;
+    }
+    if (this.offlineHandler && typeof window !== 'undefined') {
+      window.removeEventListener('offline', this.offlineHandler);
+      this.offlineHandler = null;
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.resetSession();
     clearInterval(this.pingInterval);
     if (this.diagnosticTimer) {

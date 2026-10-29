@@ -33,6 +33,7 @@ import { OfflineDirectModal } from './components/OfflineDirectModal.tsx';
 import { SplashScreen } from './components/SplashScreen.tsx';
 import { FooterFeatureBubble, FeatureNote } from './components/FooterFeatureBubble.tsx';
 import { AdminPortal } from './components/AdminPortal.tsx';
+import { ToastContainer } from './components/Toast.tsx';
 import { WebRTCManager } from './services/webrtc.ts';
 import { getLocalDeviceInfo, formatBytes } from './services/device.ts';
 import { sound } from './services/sound.ts';
@@ -46,7 +47,8 @@ import {
   UserProfile,
   ManagedFile,
   DiagnosticReport,
-  RoomValidityInfo
+  RoomValidityInfo,
+  ToastNotification
 } from './types.ts';
 
 export default function App() {
@@ -63,6 +65,19 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [diagnosticReport, setDiagnosticReport] = useState<DiagnosticReport | null>(null);
   const [roomValidity, setRoomValidity] = useState<RoomValidityInfo | null>(null);
+  const [toasts, setToasts] = useState<ToastNotification[]>([]);
+
+  const addToast = (toast: Omit<ToastNotification, 'id'>) => {
+    const newToast: ToastNotification = {
+      id: Math.random().toString(36).substring(2, 9),
+      ...toast
+    };
+    setToasts(prev => [...prev.slice(-4), newToast]);
+  };
+
+  const dismissToast = (id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  };
 
   // User Profile & Auth
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
@@ -461,6 +476,9 @@ export default function App() {
       },
       onRoomValidityUpdate: (validity) => {
         setRoomValidity(validity);
+      },
+      onToast: (toast) => {
+        addToast(toast);
       }
     });
 
@@ -884,6 +902,9 @@ export default function App() {
         note={activeFeatureNote}
         onClose={() => setActiveFeatureNote(null)}
       />
+
+      {/* Real-time Toast Notifications */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
