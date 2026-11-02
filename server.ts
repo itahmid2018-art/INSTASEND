@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import os from 'os';
 import jwt from 'jsonwebtoken';
+import { requireAdmin, JWT_SECRET } from './server/middleware/auth.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -834,28 +835,6 @@ app.post('/api/user/stats', (req, res) => {
   }
 });
 
-// Admin Auth Middleware (JWT based)
-const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-for-admin-auth';
-
-function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : (req.query.token as string);
-  
-  if (!token) {
-    return res.status(401).json({ success: false, message: 'Authentication required' });
-  }
-  
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
-    if (decoded.role !== 'admin') {
-      return res.status(403).json({ success: false, message: 'Admin access required' });
-    }
-    (req as any).user = decoded;
-    next();
-  } catch (err) {
-    return res.status(401).json({ success: false, message: 'Invalid or expired token' });
-  }
-}
 
 // Admin APIs (/admin support) - Protected
 app.get('/api/admin/overview', requireAdmin, (req, res) => {

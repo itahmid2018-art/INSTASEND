@@ -80,25 +80,24 @@ export default function App() {
   };
 
   // User Profile & Auth
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
-    try {
-      const saved = localStorage.getItem('instasend_user') || localStorage.getItem('hexasend_user');
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
 
   // Managed Files List
-  const [managedFiles, setManagedFiles] = useState<ManagedFile[]>(() => {
+  const [managedFiles, setManagedFiles] = useState<ManagedFile[]>([]);
+
+  // Load persisted state on mount
+  useEffect(() => {
     try {
-      const saved = localStorage.getItem('instasend_managed_files') || localStorage.getItem('hexasend_managed_files');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
+      const savedUser = localStorage.getItem('instasend_user') || localStorage.getItem('hexasend_user');
+      if (savedUser) setCurrentUser(JSON.parse(savedUser));
+      
+      const savedFiles = localStorage.getItem('instasend_managed_files') || localStorage.getItem('hexasend_managed_files');
+      if (savedFiles) setManagedFiles(JSON.parse(savedFiles));
+    } catch (e) {
+      console.error('Failed to restore state from localStorage:', e);
     }
-  });
+  }, []);
 
   // Modals
   const [isRadarOpen, setIsRadarOpen] = useState(false);
@@ -204,14 +203,16 @@ export default function App() {
         break;
     }
   };
-  const [history, setHistory] = useState<HistoryRecord[]>(() => {
+  const [history, setHistory] = useState<HistoryRecord[]>([]);
+
+  useEffect(() => {
     try {
       const saved = localStorage.getItem('instasend_history') || localStorage.getItem('hexasend_history');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
+      if (saved) setHistory(JSON.parse(saved));
+    } catch (e) {
+      console.error('Failed to restore history from localStorage:', e);
     }
-  });
+  }, []);
 
   // Direct invite from another peer
   const [incomingInvite, setIncomingInvite] = useState<{
