@@ -265,8 +265,9 @@ export default function App() {
     }
   };
 
-  // Parse URL query parameter or path: ?code=XYZ123 or /admin
+  // Parse URL query parameter or path: ?code=XYZ123, ?secret=..., #secret=... or /admin
   const [urlCode, setUrlCode] = useState<string>('');
+  const [urlSecret, setUrlSecret] = useState<string>('');
   useEffect(() => {
     if (window.location.pathname === '/admin') {
       setActiveView('admin');
@@ -277,10 +278,18 @@ export default function App() {
 
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code') || params.get('join') || '';
+    const hash = window.location.hash.substring(1);
+    const hashSecret = hash.startsWith('secret=') ? decodeURIComponent(hash.substring(7)) : (hash || '');
+    const querySecret = params.get('secret') || '';
+    const secret = hashSecret || querySecret;
+
     if (code) {
       setUrlCode(code.toUpperCase());
+      if (secret) setUrlSecret(secret);
       setActiveTab('receive');
       setActiveView('transfer');
+    } else if (secret) {
+      setUrlSecret(secret);
     }
 
     // Verify token and restore user profile from SQLite database
@@ -480,15 +489,39 @@ export default function App() {
       },
       onToast: (toast) => {
         addToast(toast);
+      },
+      onSecretCodeRequired: (info) => {
+        addToast({
+          type: 'warning',
+          title: 'Secret Code Required',
+          message: info.message || 'Please enter the secret code set by the sender to join.'
+        });
+      },
+      onSessionExpired: (msg) => {
+        addToast({
+          type: 'error',
+          title: 'Session Closed',
+          message: msg || 'The sender closed the session. The temporary URL has expired.'
+        });
+        sound.playError();
       }
     });
 
-    // Derive and set encryption key if secret is provided in URL fragment
+    // Derive and set encryption key if secret is provided in URL fragment or query
     const hash = window.location.hash.substring(1);
-    if (hash) {
+    const hashSecret = hash.startsWith('secret=') ? decodeURIComponent(hash.substring(7)) : (hash || '');
+    const searchParams = new URLSearchParams(window.location.search);
+    const querySecret = searchParams.get('secret') || '';
+    const initialSecret = hashSecret || querySecret;
+
+    if (initialSecret) {
       import('./services/crypto').then(async ({ deriveKey }) => {
-        const key = await deriveKey(hash);
-        manager.setEncryptionKey(key);
+        try {
+          const key = await deriveKey(initialSecret);
+          manager.setEncryptionKey(key);
+        } catch (e) {
+          console.error('Failed to derive encryption key on mount:', e);
+        }
       });
     }
 
@@ -743,6 +776,7 @@ export default function App() {
                   onSendChat={handleSendChat}
                   onReset={handleResetSession}
                   initialCode={urlCode}
+                  initialSecretCode={urlSecret}
                   errorMessage={errorMessage}
                   onOpenOfflineModal={() => {
                     setOfflineModalMode('receive');

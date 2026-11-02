@@ -9,7 +9,7 @@
     "start": "node dist/server.js",
     "clean": "node -e \"import('fs').then(fs => { fs.rmSync('dist', {recursive: true, force: true}); fs.rmSync('server.js', {force: true}); })\"",
     "lint": "tsc --noEmit",
-    "test": "node scripts/test-diagnostics-ttl.mjs && node scripts/test-lan-transfer.mjs && node scripts/test-auto-reconnect.mjs",
+    "test": "node scripts/test-diagnostics-ttl.mjs && node scripts/test-lan-transfer.mjs && node scripts/test-auto-reconnect.mjs && node scripts/test-secret-code-and-expiry.mjs",
     "cap:sync": "npx cap sync",
     "cap:open": "npx cap open android",
     "build:android": "npm run build && npx cap sync android"

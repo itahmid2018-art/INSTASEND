@@ -44,6 +44,9 @@ export interface TransferSettings {
   expirationHours: number; // 1, 24, 168 (7d), 0 (no expiry)
   selfDestructAfterDownload: boolean;
   compressTextFiles?: boolean;
+  requiresSecretCode?: boolean;
+  secretCode?: string;
+  expiresOnSenderClose?: boolean;
 }
 
 export interface FileItem {
@@ -126,6 +129,9 @@ export interface RoomValidityInfo {
   createdAt: number;
   isExpired: boolean;
   senderOnline?: boolean;
+  requiresSecretCode?: boolean;
+  secretCode?: string;
+  expiresOnSenderClose?: boolean;
 }
 
 export interface CandidateInfo {
@@ -187,3 +193,4 @@ export interface ToastNotification {
   message: string;
   durationMs?: number;
 }
+

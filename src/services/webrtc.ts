@@ -46,6 +46,8 @@ export type WebRTCEvents = {
   onDiagnosticUpdate?: (report: DiagnosticReport) => void;
   onRoomValidityUpdate?: (validity: RoomValidityInfo) => void;
   onToast?: (toast: { type: 'info' | 'warning' | 'success' | 'error'; title: string; message: string; durationMs?: number }) => void;
+  onSecretCodeRequired?: (info: { roomCode: string; message: string }) => void;
+  onSessionExpired?: (message: string) => void;
 };
 
 export class WebRTCManager {
@@ -64,7 +66,7 @@ export class WebRTCManager {
   private isCancelled = false;
   private compressTextFiles = true; // Enabled by default for .txt, .json, .md
 
-  private events: Partial<WebRTCEvents> = {};
+  public events: Partial<WebRTCEvents> = {};
   private pingInterval: any = null;
   private transferStartTime = 0;
   private lastTransferredBytes = 0;
@@ -383,6 +385,26 @@ export class WebRTCManager {
         this.events.onDirectInvite?.(msg);
         break;
 
+      case 'secret-code-required':
+        this.events.onSecretCodeRequired?.({ roomCode: msg.roomCode, message: msg.message });
+        this.events.onStateChange?.('secret_required', msg.message);
+        this.events.onError?.(msg.message || 'Secret passcode required to join this session');
+        this.logDiagnostic('room', 'warn', `Secret code required to access room ${msg.roomCode}`);
+        this.emitDiagnosticUpdate();
+        break;
+
+      case 'session-expired':
+        if (this.roomValidity) {
+          this.roomValidity.isExpired = true;
+          this.roomValidity.ttlRemainingSeconds = 0;
+          this.events.onRoomValidityUpdate?.(this.roomValidity);
+        }
+        this.events.onSessionExpired?.(msg.message || 'The temporary URL has expired.');
+        this.events.onStateChange?.('expired', msg.message);
+        this.logDiagnostic('room', 'warn', `Session closed/expired: ${msg.message}`);
+        this.emitDiagnosticUpdate();
+        break;
+
       case 'room-created':
       case 'room-reclaimed': {
         this.roomCode = msg.roomCode;
@@ -399,7 +421,10 @@ export class WebRTCManager {
           expiresAt,
           createdAt: msg.createdAt || Date.now(),
           isExpired: false,
-          senderOnline: true
+          senderOnline: true,
+          requiresSecretCode: !!msg.requiresSecretCode,
+          secretCode: msg.secretCode,
+          expiresOnSenderClose: !!msg.expiresOnSenderClose
         };
 
         this.events.onRoomCreated?.(msg.roomCode);
@@ -409,8 +434,10 @@ export class WebRTCManager {
         this.logDiagnostic(
           'room',
           'success',
-          `Session room ${msg.roomCode} active with ${Math.round(totalTtl / 60)}m validity (${ttlRemaining}s remaining until expiration)`,
-          { roomCode: msg.roomCode, expiresAt, ttlRemaining }
+          msg.expiresOnSenderClose 
+            ? `Session room ${msg.roomCode} active (Temporary URL live until sender closes session)`
+            : `Session room ${msg.roomCode} active with ${Math.round(totalTtl / 60)}m validity (${ttlRemaining}s remaining)`,
+          { roomCode: msg.roomCode, expiresAt, ttlRemaining, expiresOnSenderClose: msg.expiresOnSenderClose }
         );
         this.emitDiagnosticUpdate();
         break;
@@ -432,7 +459,9 @@ export class WebRTCManager {
           expiresAt,
           createdAt: msg.createdAt || Date.now(),
           isExpired: false,
-          senderOnline: msg.senderOnline
+          senderOnline: msg.senderOnline,
+          requiresSecretCode: !!msg.requiresSecretCode,
+          expiresOnSenderClose: !!msg.expiresOnSenderClose
         };
 
         this.events.onRoomJoined?.(msg.roomCode, msg.filesMeta);
@@ -442,7 +471,7 @@ export class WebRTCManager {
         this.logDiagnostic(
           'room',
           'success',
-          `Successfully verified session ${msg.roomCode} on signaling server. Sender is ${msg.senderOnline ? 'ONLINE' : 'reconnecting'}. TTL remaining: ${ttlRemaining}s.`,
+          `Successfully verified session ${msg.roomCode} on signaling server. Sender is ${msg.senderOnline ? 'ONLINE' : 'reconnecting'}. ${msg.expiresOnSenderClose ? 'Live session (expires when sender closes)' : `TTL: ${ttlRemaining}s`}`,
           { roomCode: msg.roomCode, expiresAt, senderOnline: msg.senderOnline }
         );
 
@@ -500,14 +529,40 @@ export class WebRTCManager {
     }
   }
 
-  // Create room as Sender
-  public createRoom(files: FileItem[], customCode?: string) {
+  // Create room as Sender (with or without secret code and session close expiration policy)
+  public createRoom(
+    files: FileItem[], 
+    customCode?: string, 
+    options?: {
+      secretCode?: string;
+      requiresSecretCode?: boolean;
+      expiresOnSenderClose?: boolean;
+    }
+  ) {
     this.filesToSend = files;
     this.role = 'sender';
     this.startDiagnostics('Sender initiated transfer session');
+
+    const secret = options?.secretCode ? options.secretCode.trim() : undefined;
+    if (secret) {
+      import('./crypto').then(async ({ deriveKey }) => {
+        try {
+          const key = await deriveKey(secret);
+          this.setEncryptionKey(key);
+        } catch (e) {
+          console.error('Failed to derive encryption key:', e);
+        }
+      });
+    }
+
     this.sendWs({
       type: 'create-room',
       customCode,
+      secretCode: secret,
+      requiresSecretCode: options?.requiresSecretCode !== undefined 
+        ? options.requiresSecretCode 
+        : !!(secret && secret.length > 0),
+      expiresOnSenderClose: options?.expiresOnSenderClose !== undefined ? options.expiresOnSenderClose : true,
       filesMeta: files.map(f => ({
         id: f.id,
         name: f.name,
@@ -519,14 +574,36 @@ export class WebRTCManager {
   }
 
   // Refresh / Generate a new 6-character room code as Sender
-  public refreshRoomCode() {
+  public refreshRoomCode(options?: {
+    secretCode?: string;
+    requiresSecretCode?: boolean;
+    expiresOnSenderClose?: boolean;
+  }) {
     this.cleanupPeerConnection();
     const oldCode = this.roomCode;
     this.roomCode = null;
     this.logDiagnostic('room', 'info', `Refreshing session code... invalidating previous code ${oldCode || ''}`);
+
+    const secret = options?.secretCode ? options.secretCode.trim() : undefined;
+    if (secret) {
+      import('./crypto').then(async ({ deriveKey }) => {
+        try {
+          const key = await deriveKey(secret);
+          this.setEncryptionKey(key);
+        } catch (e) {
+          console.error('Failed to derive encryption key:', e);
+        }
+      });
+    }
+
     this.sendWs({
       type: 'refresh-room',
       oldRoomCode: oldCode,
+      secretCode: secret,
+      requiresSecretCode: options?.requiresSecretCode !== undefined 
+        ? options.requiresSecretCode 
+        : !!(secret && secret.length > 0),
+      expiresOnSenderClose: options?.expiresOnSenderClose !== undefined ? options.expiresOnSenderClose : true,
       filesMeta: this.filesToSend.map(f => ({
         id: f.id,
         name: f.name,
@@ -556,15 +633,29 @@ export class WebRTCManager {
     this.events.onStateChange?.('idle', 'Transfer stopped by user');
   }
 
-  // Join room as Receiver
-  public joinRoom(roomCode: string) {
+  // Join room as Receiver (supports passing secret passcode)
+  public joinRoom(roomCode: string, secretCode?: string) {
     this.role = 'receiver';
     const clean = roomCode.replace(/[^A-Za-z0-9]/g, '').trim().toUpperCase();
     this.roomCode = clean;
     this.startDiagnostics(`Receiver joining session ${clean}`);
+
+    const secret = secretCode ? secretCode.trim() : undefined;
+    if (secret) {
+      import('./crypto').then(async ({ deriveKey }) => {
+        try {
+          const key = await deriveKey(secret);
+          this.setEncryptionKey(key);
+        } catch (e) {
+          console.error('Failed to derive decryption key:', e);
+        }
+      });
+    }
+
     this.sendWs({
       type: 'join-room',
-      roomCode: clean
+      roomCode: clean,
+      secretCode: secret
     });
   }
 

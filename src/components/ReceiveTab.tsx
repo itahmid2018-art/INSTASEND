@@ -24,7 +24,10 @@ import {
   QrCode,
   Wifi,
   Activity,
-  Clock
+  Clock,
+  Lock,
+  Unlock,
+  Key
 } from 'lucide-react';
 import { FileItem, TransferMetrics, DeviceInfo, ChatMessage, DiagnosticReport, RoomValidityInfo } from '../types.ts';
 import { formatBytes, formatDuration } from '../services/device.ts';
@@ -47,6 +50,7 @@ interface ReceiveTabProps {
   onSendChat: (text: string) => void;
   onReset: () => void;
   initialCode?: string;
+  initialSecretCode?: string;
   errorMessage?: string | null;
   onOpenOfflineModal?: () => void;
   diagnosticReport?: DiagnosticReport | null;
@@ -64,12 +68,19 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
   onSendChat,
   onReset,
   initialCode = '',
+  initialSecretCode = '',
   errorMessage,
   onOpenOfflineModal,
   diagnosticReport,
   roomValidity
 }) => {
   const [inputCode, setInputCode] = useState(initialCode.toUpperCase());
+  const [secretCode, setSecretCode] = useState(initialSecretCode);
+  const [isSecretRequired, setIsSecretRequired] = useState(false);
+  const [secretError, setSecretError] = useState<string | null>(null);
+  const [isSessionExpired, setIsSessionExpired] = useState(false);
+  const [sessionExpiredNotice, setSessionExpiredNotice] = useState<string | null>(null);
+
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [previewTextContent, setPreviewTextContent] = useState<string>('');
   const [copiedSnippet, setCopiedSnippet] = useState(false);
@@ -87,6 +98,38 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
   const [localValidity, setLocalValidity] = useState<RoomValidityInfo | null>(() => webrtc?.getRoomValidity() || null);
   const activeValidity = roomValidity || localValidity;
   const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null);
+
+  // Sync initial secret code if provided later (e.g. from hash change or prop update)
+  useEffect(() => {
+    if (initialSecretCode) {
+      setSecretCode(initialSecretCode);
+    }
+  }, [initialSecretCode]);
+
+  // Hook into WebRTC secret-code-required & session-expired signaling callbacks
+  useEffect(() => {
+    if (!webrtc) return;
+
+    const originalOnSecret = webrtc.events.onSecretCodeRequired;
+    const originalOnExpired = webrtc.events.onSessionExpired;
+
+    webrtc.events.onSecretCodeRequired = (info) => {
+      originalOnSecret?.(info);
+      setIsSecretRequired(true);
+      setSecretError(info?.message || 'Passcode required. Please enter the secret code set by the sender to join.');
+    };
+
+    webrtc.events.onSessionExpired = (msg) => {
+      originalOnExpired?.(msg);
+      setIsSessionExpired(true);
+      setSessionExpiredNotice(msg || 'Sender closed the transfer session. The temporary URL has expired.');
+    };
+
+    return () => {
+      webrtc.events.onSecretCodeRequired = originalOnSecret;
+      webrtc.events.onSessionExpired = originalOnExpired;
+    };
+  }, [webrtc]);
 
   // Subscribe to real-time WebRTC diagnostics updates
   useEffect(() => {
@@ -134,7 +177,7 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
 
   const copyShareLink = () => {
     if (!roomCode) return;
-    const shareUrl = buildShareUrl(roomCode);
+    const shareUrl = buildShareUrl(roomCode, undefined, secretCode, false);
     navigator.clipboard.writeText(shareUrl);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
@@ -154,10 +197,16 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
             expiresAt: data.expiresAt || (Date.now() + (data.ttlSeconds || 600) * 1000),
             createdAt: data.createdAt || Date.now(),
             isExpired: false,
-            senderOnline: data.senderOnline
+            senderOnline: data.senderOnline,
+            requiresSecretCode: data.requiresSecretCode,
+            expiresOnSenderClose: data.expiresOnSenderClose
           };
           setLocalValidity(val);
           webrtc?.setRoomValidity(val);
+
+          if (data.requiresSecretCode && !secretCode) {
+            setIsSecretRequired(true);
+          }
 
           if (!data.senderOnline) {
             setStatusNotice({
@@ -167,7 +216,7 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
           } else {
             setStatusNotice({
               type: 'info',
-              message: `Session ${clean} confirmed! Connecting to ${data.senderInfo?.name || 'Sender'} (valid for ${Math.round((val.ttlRemainingSeconds || 600)/60)}m)...`
+              message: `Session ${clean} confirmed! Connecting to ${data.senderInfo?.name || 'Sender'}...`
             });
           }
         } else {
@@ -186,8 +235,8 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
           setStatusNotice({
             type: 'error',
             message: isExp 
-              ? `Session code ${clean} has expired (10-minute validity elapsed). Ask sender for a new code or link.`
-              : `Session code ${clean} was not found or has expired. Make sure both devices are connected to the same LAN / Wi-Fi.`
+              ? `Session code ${clean} has expired. Ask sender for a new code or link.`
+              : `Session code ${clean} was not found or has expired. Make sure both devices are connected to the network.`
           });
         }
       })
@@ -212,10 +261,10 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
       if (clean.length === 6 && state === 'idle' && webrtc) {
         sound.playConnect();
         checkRoomStatus(clean);
-        webrtc.joinRoom(clean);
+        webrtc.joinRoom(clean, initialSecretCode || secretCode);
       }
     }
-  }, [initialCode, roomCode, state, webrtc]);
+  }, [initialCode, initialSecretCode, roomCode, state, webrtc]);
 
   // Confetti on completed
   useEffect(() => {
@@ -261,7 +310,7 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
     if (fullCode.length === 6 && state === 'idle') {
       sound.playConnect();
       checkRoomStatus(fullCode);
-      webrtc?.joinRoom(fullCode);
+      webrtc?.joinRoom(fullCode, secretCode);
     }
   };
 
@@ -288,7 +337,7 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
     if (clean.length === 6 && state === 'idle') {
       sound.playConnect();
       checkRoomStatus(clean);
-      webrtc?.joinRoom(clean);
+      webrtc?.joinRoom(clean, secretCode);
     }
   };
 
@@ -298,7 +347,22 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
     if (fullCode.length < 4) return;
     sound.playConnect();
     checkRoomStatus(fullCode);
-    webrtc?.joinRoom(fullCode);
+    webrtc?.joinRoom(fullCode, secretCode);
+  };
+
+  const handleUnlockWithSecret = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!secretCode.trim()) {
+      setSecretError('Please enter the secret code.');
+      return;
+    }
+    setSecretError(null);
+    const targetCode = roomCode || charBoxes.join('');
+    if (targetCode && webrtc) {
+      sound.playConnect();
+      webrtc.joinRoom(targetCode, secretCode.trim());
+      setIsSecretRequired(false);
+    }
   };
 
   const downloadFile = (fileItem: FileItem) => {
@@ -394,7 +458,52 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
 
   // Render Visual Room Code Validity Countdown
   const renderValidityCountdown = (compact = false) => {
-    if (!activeValidity || secondsRemaining === null) return null;
+    if (!activeValidity) return null;
+
+    if (activeValidity.expiresOnSenderClose) {
+      if (compact) {
+        return (
+          <div 
+            onClick={() => setIsDiagnosticsOpen(true)}
+            className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-emerald-200 bg-emerald-50 text-[#137333] text-xs font-semibold cursor-pointer shadow-2xs"
+            title="Temporary session URL remains active as long as the sender has the session open."
+          >
+            <span className="w-2 h-2 rounded-full bg-[#34A853] animate-pulse" />
+            <span>Live Temporary URL (Active until sender closes)</span>
+          </div>
+        );
+      }
+      return (
+        <div className="p-3.5 rounded-2xl border border-emerald-200 bg-emerald-50 text-[#137333] space-y-1.5 transition-all">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#34A853] animate-pulse shrink-0" />
+              <div>
+                <div className="font-bold text-xs flex items-center gap-1.5 text-[#137333]">
+                  <span>Temporary URL • Live Session</span>
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-100 text-[#0d652d] border border-emerald-300 font-semibold">
+                    Sender Session Active
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#1e4620] leading-tight">
+                  This temporary URL remains valid as long as the sender keeps the session open. It automatically expires as soon as the sender closes their tab or stops the transfer.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsDiagnosticsOpen(true)}
+              className="shrink-0 px-2.5 py-1 rounded-full bg-white hover:bg-emerald-100/50 text-xs font-semibold flex items-center gap-1 border border-emerald-300 shadow-2xs transition-colors cursor-pointer text-[#137333]"
+            >
+              <Activity className="w-3 h-3" />
+              <span>Diagnostics</span>
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (secondsRemaining === null) return null;
 
     const total = activeValidity.totalTtlSeconds || 600;
     const pct = Math.max(0, Math.min(100, (secondsRemaining / total) * 100));
@@ -550,6 +659,77 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
         {/* Visual Room Validity Countdown widget if code entered or active */}
         {renderValidityCountdown(false)}
 
+        {/* Temporary URL Expired Notice */}
+        {isSessionExpired && (
+          <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 space-y-2.5 shadow-2xs">
+            <div className="flex items-center gap-2 font-bold text-xs text-amber-800">
+              <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>Temporary URL Expired</span>
+            </div>
+            <p className="text-[11px] text-amber-850 leading-relaxed">
+              {sessionExpiredNotice || 'The sender closed the transfer session or navigated away. This temporary URL and room code have expired.'}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setIsSessionExpired(false);
+                setSessionExpiredNotice(null);
+                setCharBoxes(['', '', '', '', '', '']);
+                setInputCode('');
+                setStatusNotice(null);
+                onReset();
+              }}
+              className="px-3.5 py-1.5 rounded-full bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs transition-colors cursor-pointer"
+            >
+              Enter New Code
+            </button>
+          </div>
+        )}
+
+        {/* Secret Passcode Prompt if Required */}
+        {isSecretRequired && (
+          <div className="p-4 rounded-2xl bg-blue-50/70 border-2 border-[#1a73e8]/30 space-y-3 shadow-2xs">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-[#1a73e8] shrink-0">
+                <Lock className="w-4 h-4" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-[#202124]">Secret Passcode Required</h4>
+                <p className="text-[11px] text-[#5f6368]">Sender protected this session. Enter the secret code to unlock and receive files.</p>
+              </div>
+            </div>
+
+            {secretError && (
+              <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-xs text-[#d93025] flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{secretError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleUnlockWithSecret} className="flex items-center gap-2">
+              <input
+                type="text"
+                value={secretCode}
+                onChange={(e) => {
+                  setSecretCode(e.target.value.trim());
+                  setSecretError(null);
+                }}
+                placeholder="Enter secret code (e.g. 4892)"
+                maxLength={16}
+                className="flex-1 bg-white border border-[#dadce0] rounded-xl px-3.5 py-2 text-xs sm:text-sm font-mono font-bold text-[#202124] focus:outline-none focus:border-[#1a73e8]"
+                autoFocus
+              />
+              <button
+                type="submit"
+                disabled={!secretCode.trim()}
+                className="px-4 py-2 rounded-xl bg-[#1a73e8] hover:bg-[#1557b0] disabled:opacity-50 text-white font-semibold text-xs transition-colors cursor-pointer"
+              >
+                Unlock & Join
+              </button>
+            </form>
+          </div>
+        )}
+
         {statusNotice && (
           <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
             statusNotice.type === 'error'
@@ -701,6 +881,30 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
   // 2. Active Session: Connecting, Receiving, or Completed
   return (
     <div className="space-y-6 max-w-2xl mx-auto">
+      {/* Session Expired Banner if Sender closed session */}
+      {isSessionExpired && (
+        <div className="p-5 rounded-3xl bg-amber-50 border-2 border-amber-300 text-amber-900 space-y-3 shadow-xs">
+          <div className="flex items-center gap-2 font-bold text-sm text-amber-800">
+            <Clock className="w-5 h-5 text-amber-600 shrink-0" />
+            <span>Temporary URL Expired • Sender Closed Session</span>
+          </div>
+          <p className="text-xs text-amber-850 leading-relaxed">
+            {sessionExpiredNotice || 'The sender stopped the transfer session or closed their browser tab. As configured, the temporary URL and transfer channel have now expired.'}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setIsSessionExpired(false);
+              setSessionExpiredNotice(null);
+              onReset();
+            }}
+            className="px-4 py-2 rounded-full bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs transition-colors cursor-pointer"
+          >
+            Return to Receive Home
+          </button>
+        </div>
+      )}
+
       {/* Session Status Banner */}
       <div className="p-6 rounded-3xl bg-white border border-[#dadce0] google-card-shadow space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

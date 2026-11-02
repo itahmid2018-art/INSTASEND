@@ -14,7 +14,8 @@ const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
 
 const isProduction = process.env.NODE_ENV === 'production';
-export const PORT = parseInt(process.env.PORT || '3000', 10);
+export const PORT = 3000;
+export const BIND_HOST = '0.0.0.0';
 
 export const app = express();
 export const server = http.createServer(app);
@@ -98,6 +99,9 @@ export interface Room {
     relativePath?: string;
   }[];
   relayFiles?: Map<string, RelayFile>;
+  secretCode?: string;
+  requiresSecretCode?: boolean;
+  expiresOnSenderClose?: boolean;
 }
 
 export const peers = new Map<string, Peer>();
@@ -177,9 +181,16 @@ wss.on('connection', (ws: WebSocket) => {
         case 'create-room': {
           const requestedCode = cleanCode(message.customCode);
           let actualCode = requestedCode || generateRoomCode();
+          const secretCode = message.secretCode ? String(message.secretCode).trim() : undefined;
+          const requiresSecretCode = message.requiresSecretCode !== undefined 
+            ? !!message.requiresSecretCode 
+            : !!(secretCode && secretCode.length > 0);
+          const expiresOnSenderClose = message.expiresOnSenderClose !== undefined ? !!message.expiresOnSenderClose : false;
 
           const now = Date.now();
-          const expiresAt = now + ROOM_TTL_MS;
+          // If expiresOnSenderClose is active, set a 24-hour safety window that expires when sender closes
+          const roomTtl = expiresOnSenderClose ? 24 * 3600 : (message.ttlSeconds || ROOM_TTL_SECONDS);
+          const expiresAt = now + (roomTtl * 1000);
 
           const existingRoom = rooms.get(actualCode);
           if (existingRoom && now <= existingRoom.expiresAt) {
@@ -193,6 +204,9 @@ wss.on('connection', (ws: WebSocket) => {
             if (message.filesMeta && message.filesMeta.length > 0) {
               existingRoom.filesMeta = message.filesMeta;
             }
+            if (secretCode !== undefined) existingRoom.secretCode = secretCode;
+            if (requiresSecretCode !== undefined) existingRoom.requiresSecretCode = requiresSecretCode;
+            if (expiresOnSenderClose !== undefined) existingRoom.expiresOnSenderClose = expiresOnSenderClose;
             peer.roomCode = actualCode;
             peer.role = 'sender';
 
@@ -204,8 +218,11 @@ wss.on('connection', (ws: WebSocket) => {
               filesMeta: existingRoom.filesMeta || [],
               createdAt: existingRoom.createdAt,
               expiresAt: existingRoom.expiresAt,
-              ttlSeconds: existingRoom.ttlSeconds || ROOM_TTL_SECONDS,
-              ttlRemainingSeconds: ttlRemaining
+              ttlSeconds: existingRoom.ttlSeconds || roomTtl,
+              ttlRemainingSeconds: ttlRemaining,
+              requiresSecretCode: !!existingRoom.requiresSecretCode,
+              secretCode: existingRoom.secretCode,
+              expiresOnSenderClose: !!existingRoom.expiresOnSenderClose
             }));
 
             if (existingRoom.receiver && existingRoom.receiver.ws.readyState === WebSocket.OPEN) {
@@ -230,19 +247,25 @@ wss.on('connection', (ws: WebSocket) => {
             sender: peer,
             createdAt: now,
             expiresAt,
-            ttlSeconds: ROOM_TTL_SECONDS,
-            filesMeta: message.filesMeta || [],
-            relayFiles: new Map()
+            ttlSeconds: roomTtl,
+            filesMeta: message.filesMeta || message.files || [],
+            relayFiles: new Map(),
+            secretCode,
+            requiresSecretCode,
+            expiresOnSenderClose
           });
 
           ws.send(JSON.stringify({
             type: 'room-created',
             roomCode: actualCode,
-            filesMeta: message.filesMeta || [],
+            filesMeta: message.filesMeta || message.files || [],
             createdAt: now,
             expiresAt,
-            ttlSeconds: ROOM_TTL_SECONDS,
-            ttlRemainingSeconds: ROOM_TTL_SECONDS
+            ttlSeconds: roomTtl,
+            ttlRemainingSeconds: roomTtl,
+            requiresSecretCode,
+            secretCode,
+            expiresOnSenderClose
           }));
           break;
         }
@@ -265,7 +288,13 @@ wss.on('connection', (ws: WebSocket) => {
 
           const newCode = generateRoomCode();
           const now = Date.now();
-          const expiresAt = now + ROOM_TTL_MS;
+          const secretCode = message.secretCode ? String(message.secretCode).trim() : undefined;
+          const requiresSecretCode = message.requiresSecretCode !== undefined 
+            ? !!message.requiresSecretCode 
+            : !!(secretCode && secretCode.length > 0);
+          const expiresOnSenderClose = message.expiresOnSenderClose !== undefined ? !!message.expiresOnSenderClose : false;
+          const roomTtl = expiresOnSenderClose ? 24 * 3600 : (message.ttlSeconds || ROOM_TTL_SECONDS);
+          const expiresAt = now + (roomTtl * 1000);
 
           peer.roomCode = newCode;
           peer.role = 'sender';
@@ -275,19 +304,25 @@ wss.on('connection', (ws: WebSocket) => {
             sender: peer,
             createdAt: now,
             expiresAt,
-            ttlSeconds: ROOM_TTL_SECONDS,
-            filesMeta: message.filesMeta || [],
-            relayFiles: new Map()
+            ttlSeconds: roomTtl,
+            filesMeta: message.filesMeta || message.files || [],
+            relayFiles: new Map(),
+            secretCode,
+            requiresSecretCode,
+            expiresOnSenderClose
           });
 
           ws.send(JSON.stringify({
             type: 'room-created',
             roomCode: newCode,
-            filesMeta: message.filesMeta || [],
+            filesMeta: message.filesMeta || message.files || [],
             createdAt: now,
             expiresAt,
-            ttlSeconds: ROOM_TTL_SECONDS,
-            ttlRemainingSeconds: ROOM_TTL_SECONDS
+            ttlSeconds: roomTtl,
+            ttlRemainingSeconds: roomTtl,
+            requiresSecretCode,
+            secretCode,
+            expiresOnSenderClose
           }));
           break;
         }
@@ -298,8 +333,9 @@ wss.on('connection', (ws: WebSocket) => {
           if (room) {
             if (room.receiver && room.receiver.ws.readyState === WebSocket.OPEN) {
               room.receiver.ws.send(JSON.stringify({
-                type: 'peer-left',
-                message: 'Sender stopped transfer and closed the session code'
+                type: 'session-expired',
+                message: 'Sender closed the transfer session. The temporary URL has expired.',
+                sessionExpired: true
               }));
             }
             if (room.disconnectTimeout) clearTimeout(room.disconnectTimeout);
@@ -341,7 +377,10 @@ wss.on('connection', (ws: WebSocket) => {
               createdAt: room.createdAt,
               expiresAt: room.expiresAt,
               ttlSeconds: room.ttlSeconds || ROOM_TTL_SECONDS,
-              ttlRemainingSeconds: ttlRemaining
+              ttlRemainingSeconds: ttlRemaining,
+              requiresSecretCode: !!room.requiresSecretCode,
+              secretCode: room.secretCode,
+              expiresOnSenderClose: !!room.expiresOnSenderClose
             }));
 
             if (room.receiver && room.receiver.ws.readyState === WebSocket.OPEN) {
@@ -367,7 +406,10 @@ wss.on('connection', (ws: WebSocket) => {
               expiresAt,
               ttlSeconds: ROOM_TTL_SECONDS,
               filesMeta: message.filesMeta || [],
-              relayFiles: new Map()
+              relayFiles: new Map(),
+              requiresSecretCode: !!message.requiresSecretCode,
+              secretCode: message.secretCode,
+              expiresOnSenderClose: !!message.expiresOnSenderClose
             });
 
             ws.send(JSON.stringify({
@@ -377,7 +419,10 @@ wss.on('connection', (ws: WebSocket) => {
               createdAt: now,
               expiresAt,
               ttlSeconds: ROOM_TTL_SECONDS,
-              ttlRemainingSeconds: ROOM_TTL_SECONDS
+              ttlRemainingSeconds: ROOM_TTL_SECONDS,
+              requiresSecretCode: !!message.requiresSecretCode,
+              secretCode: message.secretCode,
+              expiresOnSenderClose: !!message.expiresOnSenderClose
             }));
           }
           break;
@@ -406,6 +451,20 @@ wss.on('connection', (ws: WebSocket) => {
             rooms.set(code, room);
           }
 
+          // Secret passcode protection check
+          if (room.requiresSecretCode && room.secretCode) {
+            const clientSecret = message.secretCode ? String(message.secretCode).trim() : '';
+            if (clientSecret !== room.secretCode) {
+              ws.send(JSON.stringify({
+                type: 'secret-code-required',
+                code: 'SECRET_CODE_REQUIRED',
+                roomCode: code,
+                message: 'This session is protected with a secret code. Please enter the passcode to access files.'
+              }));
+              break;
+            }
+          }
+
           const senderOnline = !!(room.sender && room.sender.ws.readyState === WebSocket.OPEN);
           const ttlRemaining = Math.max(0, Math.floor((room.expiresAt - now) / 1000));
 
@@ -423,7 +482,9 @@ wss.on('connection', (ws: WebSocket) => {
             createdAt: room.createdAt,
             expiresAt: room.expiresAt,
             ttlSeconds: room.ttlSeconds || ROOM_TTL_SECONDS,
-            ttlRemainingSeconds: ttlRemaining
+            ttlRemainingSeconds: ttlRemaining,
+            requiresSecretCode: !!room.requiresSecretCode,
+            expiresOnSenderClose: !!room.expiresOnSenderClose
           }));
 
           // Notify sender that receiver has arrived (if online)
@@ -507,9 +568,12 @@ export function leaveRoom(peer: Peer, isExplicitLeave = false) {
   const otherPeer = peer.role === 'sender' ? room.receiver : room.sender;
   if (otherPeer && otherPeer.ws.readyState === WebSocket.OPEN) {
     otherPeer.ws.send(JSON.stringify({
-      type: 'peer-left',
+      type: isExplicitLeave && peer.role === 'sender' ? 'session-expired' : 'peer-left',
       role: peer.role,
-      isTemporary: !isExplicitLeave && peer.role === 'sender'
+      isTemporary: !isExplicitLeave && peer.role === 'sender',
+      message: isExplicitLeave && peer.role === 'sender' 
+        ? 'Sender closed the transfer session. The temporary URL has expired.'
+        : undefined
     }));
   }
 
@@ -525,6 +589,12 @@ export function leaveRoom(peer: Peer, isExplicitLeave = false) {
       room.disconnectTimeout = setTimeout(() => {
         const currentRoom = rooms.get(codeToDelete);
         if (currentRoom && currentRoom.disconnectedAt && (!currentRoom.sender || currentRoom.sender.ws.readyState !== WebSocket.OPEN)) {
+          if (currentRoom.receiver && currentRoom.receiver.ws.readyState === WebSocket.OPEN) {
+            currentRoom.receiver.ws.send(JSON.stringify({
+              type: 'session-expired',
+              message: 'Sender disconnected and session closed. The temporary URL has expired.'
+            }));
+          }
           rooms.delete(codeToDelete);
         }
       }, 120 * 1000);
@@ -630,7 +700,9 @@ app.get('/api/room/:code', (req, res) => {
     disconnectedAt: room.disconnectedAt || null,
     senderInfo: room.sender?.deviceInfo || { name: 'Sender Device' },
     filesMeta: room.filesMeta || [],
-    relayFilesCount: room.relayFiles ? room.relayFiles.size : 0
+    relayFilesCount: room.relayFiles ? room.relayFiles.size : 0,
+    requiresSecretCode: !!room.requiresSecretCode,
+    expiresOnSenderClose: !!room.expiresOnSenderClose
   });
 });
 
@@ -926,10 +998,18 @@ app.get('/api/admin/seed-sql', requireAdmin, (req, res) => {
  * - LAN / Wi-Fi IP addresses (e.g., 192.168.x.x, 10.x.x.x)
  * - Configured port and binding host (0.0.0.0)
  */
-export function logServerNetworkAddresses(port: number, host = '0.0.0.0') {
+export function logServerNetworkAddresses(port = PORT, host = BIND_HOST) {
   const interfaces = os.networkInterfaces();
-  const addressList: { name: string; address: string; family: string; isInternal: boolean }[] = [];
+  
+  console.log('\n[Network Discovery] Detected network interface addresses via os.networkInterfaces():');
+  for (const [name, ifaces] of Object.entries(interfaces)) {
+    console.log(`  Interface: ${name}`);
+    for (const iface of ifaces || []) {
+      console.log(`    - IP: ${iface.address.padEnd(16)} | Family: ${iface.family} | Internal: ${iface.internal}`);
+    }
+  }
 
+  const addressList: { name: string; address: string; family: string; isInternal: boolean }[] = [];
   for (const [name, ifaces] of Object.entries(interfaces)) {
     for (const iface of ifaces || []) {
       if (iface.family === 'IPv4') {
@@ -946,13 +1026,20 @@ export function logServerNetworkAddresses(port: number, host = '0.0.0.0') {
   const lanAddresses = addressList.filter(a => !a.isInternal);
   const loopbackAddresses = addressList.filter(a => a.isInternal);
 
+  // Group and highlight private LAN subnets (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+  const privateLanIps = lanAddresses.filter(a =>
+    a.address.startsWith('192.168.') ||
+    a.address.startsWith('10.') ||
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(a.address)
+  );
+
   console.log('\n======================================================');
   console.log('  🚀 InstaSend Signaling & P2P Web Server');
   console.log('======================================================');
-  console.log(`  > Port:                 ${port} (env PORT: ${process.env.PORT ? `"${process.env.PORT}"` : 'unset, defaulted to 3000'})`);
-  console.log(`  > Host Binding:         ${host} (listening on ALL network interfaces)`);
+  console.log(`  > Confirmed Binding Address: ${host}:${port} (Listening on ALL interfaces)`);
+  console.log(`  > Configured Port:           ${port} (explicitly set to 3000)`);
   console.log('------------------------------------------------------');
-  console.log('  🌐 Local Loopback Addresses:');
+  console.log('  🌐 Local Loopback Addresses (This Machine Only):');
   console.log(`     - http://localhost:${port}`);
   console.log(`     - http://127.0.0.1:${port}`);
   for (const lb of loopbackAddresses) {
@@ -961,16 +1048,23 @@ export function logServerNetworkAddresses(port: number, host = '0.0.0.0') {
     }
   }
   console.log('------------------------------------------------------');
-  console.log('  📡 Network LAN Addresses (accessible to other devices):');
-  if (lanAddresses.length === 0) {
-    console.log('     (No active external LAN interfaces detected; running on loopback only)');
+  console.log('  📡 Available Local LAN IP Addresses (e.g. 192.168.x.x):');
+  if (privateLanIps.length === 0) {
+    console.log('     (No 192.168.x.x or 10.x.x.x private LAN interfaces found)');
   } else {
-    for (const lan of lanAddresses) {
-      console.log(`     - http://${lan.address}:${port} [Interface: ${lan.name}]`);
+    for (const lan of privateLanIps) {
+      console.log(`     - Local IP:     http://${lan.address}:${port}/ [Interface: ${lan.name}]`);
+      console.log(`     - Admin Portal: http://${lan.address}:${port}/admin`);
+    }
+  }
+  if (lanAddresses.length > privateLanIps.length) {
+    console.log('  📡 Other Non-Loopback Network Interfaces:');
+    for (const lan of lanAddresses.filter(a => !privateLanIps.includes(a))) {
+      console.log(`     - IP:           http://${lan.address}:${port}/ [Interface: ${lan.name}]`);
     }
   }
   console.log('------------------------------------------------------');
-  console.log(`  🔌 WebSocket Signaling: ws://localhost:${port}/ws`);
+  console.log(`  🔌 WebSocket Signaling: ws://${host === '0.0.0.0' ? 'localhost' : host}:${port}/ws`);
   console.log(`  🛡️  Admin Console:       http://localhost:${port}/admin`);
   console.log(`  🩺 Health Check:        http://localhost:${port}/api/health`);
   console.log('======================================================\n');
@@ -1057,8 +1151,29 @@ export async function startServer() {
     }
   });
 
-  server.listen(PORT, '0.0.0.0', () => {
-    logServerNetworkAddresses(PORT, '0.0.0.0');
+  server.listen(PORT, BIND_HOST, () => {
+    console.log('Server running at http://0.0.0.0:3000');
+
+    const addr = server.address();
+    const actualHost = typeof addr === 'object' && addr ? addr.address : BIND_HOST;
+    const actualPort = typeof addr === 'object' && addr ? addr.port : PORT;
+    const actualFamily = typeof addr === 'object' && addr ? addr.family : 'IPv4';
+
+    const localUrl = `http://localhost:${actualPort}`;
+    const networkUrl = `http://${actualHost}:${actualPort}`;
+    const adminUrl = `http://localhost:${actualPort}/admin`;
+
+    console.log(`\n======================================================`);
+    console.log(`Server running at http://0.0.0.0:3000`);
+    console.log(`[Server URL] Exact Local URL:   ${localUrl}`);
+    console.log(`[Server URL] Exact Network URL: ${networkUrl}`);
+    console.log(`[Server URL] Admin Portal URL:  ${adminUrl}`);
+    console.log(`[Server] Successfully bound to ${actualHost}:${actualPort} (${actualFamily}) on all network interfaces.`);
+    console.log(`[Server] Explicitly listening on 0.0.0.0:3000.`);
+    console.log(`[Server] Remote devices can connect to Admin Portal at: http://<LAN_IP>:${actualPort}/admin`);
+    console.log(`======================================================\n`);
+
+    logServerNetworkAddresses(actualPort, actualHost);
   });
 }
 

@@ -35,7 +35,9 @@ import {
   Layers,
   ListChecks,
   Download,
-  Smartphone
+  Smartphone,
+  Unlock,
+  Key
 } from 'lucide-react';
 import { FileItem, TransferMetrics, DeviceInfo, ChatMessage, TransferSettings } from '../types.ts';
 import { formatBytes, formatDuration } from '../services/device.ts';
@@ -86,6 +88,8 @@ export const SendTab: React.FC<SendTabProps> = ({
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedProtectedLink, setCopiedProtectedLink] = useState(false);
+  const [copiedPasscode, setCopiedPasscode] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [showChat, setShowChat] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -94,6 +98,11 @@ export const SendTab: React.FC<SendTabProps> = ({
   const [isQRModalOpen, setIsQRModalOpen] = useState(false);
   const [compressTextFiles, setCompressTextFiles] = useState(true);
   const [lanIp, setLanIp] = useState<string>('');
+
+  // Access & Expiration Settings: Secret Code and Session Expiration
+  const [requiresSecretCode, setRequiresSecretCode] = useState(false);
+  const [secretCode, setSecretCode] = useState(() => Math.floor(1000 + Math.random() * 9000).toString());
+  const [expiresOnSenderClose, setExpiresOnSenderClose] = useState(true);
 
   // Fetch local LAN network info on mount
   useEffect(() => {
@@ -127,7 +136,7 @@ export const SendTab: React.FC<SendTabProps> = ({
     if (roomCode) {
       fetchNetworkInfo().then(info => {
         const targetIp = info?.lanIp || lanIp;
-        const shareUrl = buildShareUrl(roomCode, targetIp);
+        const shareUrl = buildShareUrl(roomCode, targetIp, requiresSecretCode ? secretCode : undefined, true);
         QRCode.toDataURL(shareUrl, {
           width: 240,
           margin: 2,
@@ -147,7 +156,7 @@ export const SendTab: React.FC<SendTabProps> = ({
         webrtc.uploadToLANRelay(roomCode).catch(() => {});
       }
     }
-  }, [roomCode, lanIp, webrtc, stagedFiles]);
+  }, [roomCode, lanIp, webrtc, stagedFiles, requiresSecretCode, secretCode]);
 
   // Trigger celebration confetti when transfer is complete
   useEffect(() => {
@@ -258,6 +267,12 @@ export const SendTab: React.FC<SendTabProps> = ({
   };
 
   const handleCreateCode = () => {
+    const options = {
+      secretCode: requiresSecretCode ? secretCode.trim() : undefined,
+      requiresSecretCode,
+      expiresOnSenderClose
+    };
+
     if (mode === 'text' && textSnippet.trim()) {
       const blob = new Blob([textSnippet], { type: 'text/plain;charset=utf-8' });
       const virtualFile = new File([blob], 'secure-note.txt', { type: 'text/plain' });
@@ -273,18 +288,22 @@ export const SendTab: React.FC<SendTabProps> = ({
       };
       setStagedFiles([item]);
       onFilesStaged?.([item]);
-      webrtc?.createRoom([item]);
+      webrtc?.createRoom([item], undefined, options);
     } else {
       if (stagedFiles.length === 0) return;
       onFilesStaged?.(stagedFiles);
-      webrtc?.createRoom(stagedFiles);
+      webrtc?.createRoom(stagedFiles, undefined, options);
     }
     sound.playConnect();
   };
 
   const handleRefreshCode = () => {
     if (webrtc) {
-      webrtc.refreshRoomCode();
+      webrtc.refreshRoomCode({
+        secretCode: requiresSecretCode ? secretCode.trim() : undefined,
+        requiresSecretCode,
+        expiresOnSenderClose
+      });
       sound.playConnect();
     }
   };
@@ -305,19 +324,36 @@ export const SendTab: React.FC<SendTabProps> = ({
 
   const copyShareLink = () => {
     if (!roomCode) return;
-    const shareUrl = buildShareUrl(roomCode, lanIp);
+    // 1-Click Link (includes secret if secret code protection is on)
+    const shareUrl = buildShareUrl(roomCode, lanIp, requiresSecretCode ? secretCode : undefined, true);
     navigator.clipboard.writeText(shareUrl);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
+  const copyProtectedLink = () => {
+    if (!roomCode) return;
+    // Protected link without secret embedded - recipient must type the secret code
+    const shareUrl = buildShareUrl(roomCode, lanIp, undefined, false);
+    navigator.clipboard.writeText(shareUrl);
+    setCopiedProtectedLink(true);
+    setTimeout(() => setCopiedProtectedLink(false), 2000);
+  };
+
+  const copyPasscodeOnly = () => {
+    navigator.clipboard.writeText(secretCode);
+    setCopiedPasscode(true);
+    setTimeout(() => setCopiedPasscode(false), 2000);
+  };
+
   const shareOnWhatsApp = () => {
     if (!roomCode) return;
-    const shareUrl = buildShareUrl(roomCode, lanIp);
+    const shareUrl = buildShareUrl(roomCode, lanIp, requiresSecretCode ? secretCode : undefined, true);
     const fileCount = stagedFiles.length;
     const totalBytes = stagedFiles.reduce((acc, f) => acc + f.size, 0);
     const summary = fileCount > 0 ? `${fileCount} ${fileCount === 1 ? 'file' : 'files'} (${formatBytes(totalBytes)})` : 'files';
-    const text = `⚡ *InstaSend Peer-to-Peer Transfer*\nI'm sharing ${summary} with you via encrypted WebRTC.\n\n🔑 *Room Code:* ${roomCode}\n👉 *Tap to join & receive instantly:* ${shareUrl}`;
+    const secretText = requiresSecretCode ? `\n🔒 *Secret Code:* ${secretCode}` : '';
+    const text = `⚡ *InstaSend Peer-to-Peer Transfer*\nI'm sharing ${summary} with you via encrypted WebRTC.\n\n🔑 *Room Code:* ${roomCode}${secretText}\n👉 *Tap to join & receive instantly:* ${shareUrl}\n⏳ *Temporary URL:* Active until sender closes the session.`;
     const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
     window.open(url, '_blank', 'noopener,noreferrer');
   };
@@ -710,51 +746,166 @@ export const SendTab: React.FC<SendTabProps> = ({
                   </label>
                 </div>
 
-                {/* Transfer Security & Expiration Options */}
-                <div className="p-3.5 rounded-xl bg-[#f8f9fa] border border-[#dadce0] text-xs space-y-2">
-                  <div 
-                    className="flex items-center justify-between cursor-pointer select-none"
-                    onClick={() => setShowSettings(!showSettings)}
-                  >
-                    <div className="flex items-center gap-2 text-[#202124] font-medium">
-                      <Sliders className="w-3.5 h-3.5 text-[#1a73e8]" />
-                      <span>Transfer Preferences</span>
+                {/* Receiver Access & Temporary URL Expiry Controls */}
+                <div className="p-4 rounded-2xl bg-[#f8f9fa] border border-[#dadce0] space-y-3.5 shadow-2xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Key className="w-4 h-4 text-[#1a73e8]" />
+                      <span className="text-xs font-bold text-[#202124]">Receiver Access & Security</span>
                     </div>
-                    <span className="text-[11px] text-[#1a73e8] font-medium">
-                      {showSettings ? 'Hide Options' : 'Configure Expiry'}
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-[#1a73e8] border border-blue-100">
+                      {requiresSecretCode ? '🔒 Passcode Protected' : '⚡ Direct Open Access'}
                     </span>
                   </div>
 
-                  {showSettings && (
-                    <div className="pt-2 border-t border-[#dadce0] space-y-3">
-                      <div>
-                        <label className="block text-[#5f6368] text-[11px] mb-1">Session Expiration</label>
-                        <select
-                          value={settings.expirationHours}
-                          onChange={(e) => setSettings({ ...settings, expirationHours: Number(e.target.value) })}
-                          className="w-full bg-white border border-[#dadce0] rounded-lg p-2 text-xs text-[#202124] focus:outline-none focus:border-[#1a73e8]"
-                        >
-                          <option value={1}>Auto-expire after 1 hour</option>
-                          <option value={24}>Auto-expire after 24 hours (Default)</option>
-                          <option value={168}>Auto-expire after 7 days</option>
-                          <option value={0}>Never expire (until session closed)</option>
-                        </select>
+                  {/* With or Without Secret Code Switcher */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRequiresSecretCode(false)}
+                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                        !requiresSecretCode 
+                          ? 'bg-white border-[#1a73e8] shadow-xs ring-1 ring-[#1a73e8]/20 text-[#202124]' 
+                          : 'bg-white/60 border-[#dadce0] text-[#5f6368] hover:bg-white'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-bold text-xs text-[#202124]">
+                          <Unlock className="w-3.5 h-3.5 text-[#34A853]" />
+                          <span>Without Secret Code</span>
+                        </div>
+                        {!requiresSecretCode && <Check className="w-4 h-4 text-[#1a73e8]" />}
                       </div>
+                      <p className="text-[11px] text-[#5f6368] mt-1 leading-snug">
+                        Recipient joins immediately with room code or direct link without entering any code.
+                      </p>
+                    </button>
 
-                      <div className="flex items-center gap-2 pt-1">
-                        <input
-                          type="checkbox"
-                          id="destruct-cb"
-                          checked={settings.selfDestructAfterDownload}
-                          onChange={(e) => setSettings({ ...settings, selfDestructAfterDownload: e.target.checked })}
-                          className="rounded text-[#1a73e8] border-[#dadce0] focus:ring-0"
-                        />
-                        <label htmlFor="destruct-cb" className="text-[#3c4043] text-[11px] cursor-pointer">
-                          Self-destruct link immediately after 1 successful download
+                    <button
+                      type="button"
+                      onClick={() => setRequiresSecretCode(true)}
+                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                        requiresSecretCode 
+                          ? 'bg-white border-[#1a73e8] shadow-xs ring-1 ring-[#1a73e8] text-[#202124]' 
+                          : 'bg-white/60 border-[#dadce0] text-[#5f6368] hover:bg-white'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-bold text-xs text-[#202124]">
+                          <Lock className="w-3.5 h-3.5 text-[#ea4335]" />
+                          <span>With Secret Code</span>
+                        </div>
+                        {requiresSecretCode && <Check className="w-4 h-4 text-[#1a73e8]" />}
+                      </div>
+                      <p className="text-[11px] text-[#5f6368] mt-1 leading-snug">
+                        Recipient must enter your secret code or click a 1-click secret URL to join & decrypt.
+                      </p>
+                    </button>
+                  </div>
+
+                  {/* Secret Code Input & Generator */}
+                  {requiresSecretCode && (
+                    <div className="p-3 bg-white rounded-xl border border-amber-200/80 bg-amber-50/40 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] font-bold text-amber-900 flex items-center gap-1.5">
+                          <Lock className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Secret Passcode / PIN</span>
                         </label>
+                        <button
+                          type="button"
+                          onClick={() => setSecretCode(Math.floor(1000 + Math.random() * 9000).toString())}
+                          className="text-[11px] font-semibold text-[#1a73e8] hover:underline cursor-pointer"
+                        >
+                          Generate New PIN
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={secretCode}
+                          onChange={(e) => setSecretCode(e.target.value.trim())}
+                          placeholder="e.g. 4892"
+                          maxLength={12}
+                          className="flex-1 bg-white border border-[#dadce0] rounded-lg px-3 py-1.5 text-sm font-mono font-bold text-[#202124] focus:outline-none focus:border-[#1a73e8]"
+                        />
+                        <span className="text-[11px] text-[#5f6368] font-medium shrink-0">
+                          (AES-256 GCM Key)
+                        </span>
                       </div>
                     </div>
                   )}
+
+                  {/* Temporary URL Expiration Policy */}
+                  <div className="pt-2.5 border-t border-[#dadce0] space-y-2">
+                    <div className="flex items-start gap-2.5">
+                      <input
+                        type="checkbox"
+                        id="expires-on-sender-close"
+                        checked={expiresOnSenderClose}
+                        onChange={(e) => setExpiresOnSenderClose(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 rounded border-[#dadce0] text-[#1a73e8] focus:ring-0 cursor-pointer"
+                      />
+                      <label htmlFor="expires-on-sender-close" className="flex-1 cursor-pointer select-none">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-semibold text-[#202124]">
+                            Temporary URL: Active only until sender closes session
+                          </span>
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-50 text-[#188038] border border-emerald-200">
+                            Live URL
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-[#5f6368] mt-0.5 leading-snug">
+                          The temporary URL and WebRTC signaling room remain active as long as this transfer tab is open. As soon as you click "Stop Transfer" or close your tab, the temporary URL immediately expires and self-destructs.
+                        </p>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Advanced Transfer Preferences toggle */}
+                  <div className="pt-2 border-t border-[#dadce0]/60">
+                    <button
+                      type="button"
+                      onClick={() => setShowSettings(!showSettings)}
+                      className="flex items-center justify-between w-full text-left text-xs font-medium text-[#5f6368] hover:text-[#202124] cursor-pointer"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <Sliders className="w-3.5 h-3.5 text-[#1a73e8]" />
+                        <span>Additional Preferences</span>
+                      </div>
+                      <span className="text-[11px] text-[#1a73e8]">
+                        {showSettings ? 'Hide Options' : 'Show Advanced'}
+                      </span>
+                    </button>
+
+                    {showSettings && (
+                      <div className="pt-2 mt-2 border-t border-[#dadce0] space-y-2">
+                        <div>
+                          <label className="block text-[#5f6368] text-[11px] mb-1">Max Duration Fallback</label>
+                          <select
+                            value={settings.expirationHours}
+                            onChange={(e) => setSettings({ ...settings, expirationHours: Number(e.target.value) })}
+                            className="w-full bg-white border border-[#dadce0] rounded-lg p-2 text-xs text-[#202124] focus:outline-none focus:border-[#1a73e8]"
+                          >
+                            <option value={1}>Auto-expire after 1 hour</option>
+                            <option value={24}>Auto-expire after 24 hours (Default)</option>
+                            <option value={168}>Auto-expire after 7 days</option>
+                          </select>
+                        </div>
+                        <div className="flex items-center gap-2 pt-1">
+                          <input
+                            type="checkbox"
+                            id="destruct-cb"
+                            checked={settings.selfDestructAfterDownload}
+                            onChange={(e) => setSettings({ ...settings, selfDestructAfterDownload: e.target.checked })}
+                            className="rounded text-[#1a73e8] border-[#dadce0] focus:ring-0"
+                          />
+                          <label htmlFor="destruct-cb" className="text-[#3c4043] text-[11px] cursor-pointer">
+                            Self-destruct link immediately after 1 successful download
+                          </label>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Generate Code & Serverless Local Wi-Fi Mode CTAs */}
@@ -851,35 +1002,65 @@ export const SendTab: React.FC<SendTabProps> = ({
               <span className="text-xs uppercase font-bold tracking-wider text-[#188038]">
                 Session Active • Ready to Transfer
               </span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-[#137333] border border-emerald-200">
-                Active Until Tab Closed or Stopped
-              </span>
+              {expiresOnSenderClose ? (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-[#137333] border border-emerald-200 flex items-center gap-1">
+                  <span>🟢</span> Temporary URL • Active until sender closes session
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-[#1a73e8] border border-blue-200">
+                  Timed Session
+                </span>
+              )}
             </div>
 
             <h3 className="text-sm font-medium text-[#5f6368]">
               Recipient can enter this 6-character code or scan the QR code to connect:
             </h3>
 
-            {/* Code Box */}
-            <div className="inline-flex items-center gap-2 p-1.5 rounded-2xl bg-[#f8f9fa] border border-[#dadce0]">
-              <div className="flex gap-1.5 px-2">
-                {roomCode.split('').map((char, idx) => (
-                  <span
-                    key={idx}
-                    className="w-8 sm:w-10 h-10 sm:h-12 flex items-center justify-center text-lg sm:text-2xl font-black font-mono text-[#1a73e8] bg-white rounded-xl border border-[#dadce0] shadow-2xs"
-                  >
-                    {char}
-                  </span>
-                ))}
+            {/* Code Box & Optional Passcode */}
+            <div className="flex flex-col sm:flex-row items-center gap-3">
+              {/* Room Code */}
+              <div className="inline-flex items-center gap-2 p-1.5 rounded-2xl bg-[#f8f9fa] border border-[#dadce0]">
+                <div className="flex gap-1.5 px-2">
+                  {roomCode.split('').map((char, idx) => (
+                    <span
+                      key={idx}
+                      className="w-8 sm:w-10 h-10 sm:h-12 flex items-center justify-center text-lg sm:text-2xl font-black font-mono text-[#1a73e8] bg-white rounded-xl border border-[#dadce0] shadow-2xs"
+                    >
+                      {char}
+                    </span>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={copyRoomCode}
+                  className="p-2 sm:p-2.5 rounded-xl bg-blue-50 text-[#1a73e8] hover:bg-blue-100 transition-colors cursor-pointer"
+                  title="Copy Room Code"
+                >
+                  {copiedCode ? <Check className="w-5 h-5 text-[#34a853]" /> : <Copy className="w-5 h-5" />}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={copyRoomCode}
-                className="p-2 sm:p-2.5 rounded-xl bg-blue-50 text-[#1a73e8] hover:bg-blue-100 transition-colors cursor-pointer"
-                title="Copy Code"
-              >
-                {copiedCode ? <Check className="w-5 h-5 text-[#34a853]" /> : <Copy className="w-5 h-5" />}
-              </button>
+
+              {/* Secret Code Card if enabled */}
+              {requiresSecretCode && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-2xl bg-amber-50 border border-amber-200/90 shadow-2xs">
+                  <div className="flex items-center gap-1.5">
+                    <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+                    <div>
+                      <span className="block text-[9px] uppercase font-bold text-amber-700 tracking-wider">Secret Code</span>
+                      <span className="font-mono font-black text-base text-[#202124] tracking-wider">{secretCode}</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={copyPasscodeOnly}
+                    className="p-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800 transition-colors cursor-pointer ml-1"
+                    title="Copy Secret PIN"
+                  >
+                    {copiedPasscode ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                  </button>
+                </div>
+              )}
             </div>
 
             {lanIp && lanIp !== '127.0.0.1' && (
@@ -891,20 +1072,35 @@ export const SendTab: React.FC<SendTabProps> = ({
 
             {/* Direct Link, Refresh & Stop Action Buttons */}
             <div className="flex flex-wrap items-center gap-2 pt-1 justify-center md:justify-start">
+              {/* 1-Click Link */}
               <button
                 type="button"
                 onClick={copyShareLink}
-                className="flex items-center gap-2 text-xs text-[#3c4043] hover:text-[#202124] bg-[#f8f9fa] hover:bg-[#f1f3f4] px-3.5 py-1.5 rounded-full border border-[#dadce0] transition-colors cursor-pointer font-medium"
+                className="flex items-center gap-1.5 text-xs text-[#1a73e8] bg-blue-50/80 hover:bg-blue-100 px-3.5 py-1.5 rounded-full border border-blue-200 transition-colors cursor-pointer font-semibold"
+                title={requiresSecretCode ? "Copy 1-Click link with secret code embedded (auto-unlocks for receiver)" : "Copy shareable direct link"}
               >
                 {copiedLink ? <Check className="w-3.5 h-3.5 text-[#34A853]" /> : <Copy className="w-3.5 h-3.5 text-[#1a73e8]" />}
-                <span>{copiedLink ? 'Link Copied!' : 'Copy Share Link'}</span>
+                <span>{copiedLink ? 'Link Copied!' : requiresSecretCode ? 'Copy 1-Click Direct Link' : 'Copy Direct Link'}</span>
               </button>
+
+              {/* Protected Link (Without Secret Code) if secret protection is active */}
+              {requiresSecretCode && (
+                <button
+                  type="button"
+                  onClick={copyProtectedLink}
+                  className="flex items-center gap-1.5 text-xs text-[#3c4043] hover:text-[#202124] bg-[#f8f9fa] hover:bg-[#f1f3f4] px-3.5 py-1.5 rounded-full border border-[#dadce0] transition-colors cursor-pointer font-medium"
+                  title="Share protected link without secret code (receiver must manually enter the PIN)"
+                >
+                  {copiedProtectedLink ? <Check className="w-3.5 h-3.5 text-[#34A853]" /> : <Lock className="w-3.5 h-3.5 text-[#5f6368]" />}
+                  <span>{copiedProtectedLink ? 'Protected Link Copied!' : 'Copy Protected Link (Requires PIN)'}</span>
+                </button>
+              )}
 
               <button
                 type="button"
                 onClick={handleRefreshCode}
-                className="flex items-center gap-1.5 text-xs text-[#1a73e8] hover:bg-blue-50 px-3.5 py-1.5 rounded-full border border-[#1a73e8]/30 transition-colors cursor-pointer font-medium"
-                title="Generate a new 6-character room code and update QR code"
+                className="flex items-center gap-1.5 text-xs text-[#1a73e8] hover:bg-blue-50 px-3 py-1.5 rounded-full border border-[#1a73e8]/30 transition-colors cursor-pointer font-medium"
+                title="Generate a new room code and update QR code"
               >
                 <RefreshCw className="w-3.5 h-3.5 text-[#1a73e8]" />
                 <span>Refresh Code</span>
@@ -914,10 +1110,10 @@ export const SendTab: React.FC<SendTabProps> = ({
                 type="button"
                 onClick={handleStopTransfer}
                 className="flex items-center gap-1.5 text-xs text-[#d93025] hover:bg-red-50 px-3.5 py-1.5 rounded-full border border-red-200 transition-colors cursor-pointer font-medium"
-                title="Stop transfer and close session code"
+                title="Close session and immediately expire the temporary URL"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>Stop Transfer</span>
+                <span>Stop Transfer & Expire URL</span>
               </button>
 
               <button
