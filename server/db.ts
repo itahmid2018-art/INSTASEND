@@ -140,10 +140,17 @@ class SQLiteAuthService {
     const existing = stmt.get(adminEmail, 'admin@instasend.io');
 
     if (!existing) {
-      const salt = 'a1b2c3d4e5f67890123456789abcdef0';
-      const hash = this.hashPassword('1@3$5^7*9', salt);
+      const salt = crypto.randomBytes(16).toString('hex');
+      const randomPassword = crypto.randomBytes(16).toString('hex');
+      const hash = this.hashPassword(randomPassword, salt);
       const userId = 'usr_admin_system';
       const now = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+      console.warn('----------------------------------------------------');
+      console.warn('SECURITY ALERT: No admin user found. Creating one.');
+      console.warn(`Admin Password: ${randomPassword}`);
+      console.warn('PLEASE SAVE THIS PASSWORD SECURELY!');
+      console.warn('----------------------------------------------------');
 
       const insert = this.db.prepare(`
         INSERT INTO users (

@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import os from 'os';
+import jwt from 'jsonwebtoken';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -640,9 +641,26 @@ app.post('/api/transfer/:code/upload', (req, res) => {
     if (!room) {
       return res.status(404).json({ success: false, message: 'Room not found' });
     }
+    
+    // Security: Limit total files/size in relay to prevent memory exhaustion
+    const MAX_RELAY_FILES = 5;
+    const MAX_RELAY_SIZE = 50 * 1024 * 1024; // 50MB per room
+    
+    const currentSize = room.relayFiles ? Array.from(room.relayFiles.values()).reduce((sum, f) => sum + f.size, 0) : 0;
+
     const { id, name, size, type, relativePath, base64Data, sha256 } = req.body;
     if (!id || !name || !base64Data) {
       return res.status(400).json({ success: false, message: 'Missing file payload data' });
+    }
+    
+    const fileSize = Number(size) || Buffer.byteLength(base64Data, 'base64');
+    
+    if (room.relayFiles && room.relayFiles.size >= MAX_RELAY_FILES) {
+      return res.status(400).json({ success: false, message: 'Room relay limit reached (too many files)' });
+    }
+    
+    if (currentSize + fileSize > MAX_RELAY_SIZE) {
+      return res.status(400).json({ success: false, message: 'Room relay limit reached (size exceeded)' });
     }
 
     if (!room.relayFiles) room.relayFiles = new Map();
@@ -651,7 +669,7 @@ app.post('/api/transfer/:code/upload', (req, res) => {
     room.relayFiles.set(id, {
       id,
       name,
-      size: Number(size) || buffer.length,
+      size: fileSize,
       type: type || 'application/octet-stream',
       relativePath: relativePath || name,
       chunks: [buffer],
@@ -774,6 +792,25 @@ app.post('/api/auth/logout', (req, res) => {
   }
 });
 
+app.post('/api/auth/admin-login', (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : req.body.token;
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+    const user = sqliteAuth.getUserByToken(token);
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Admin access required' });
+    }
+    const jwtToken = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '1h' });
+    res.json({ success: true, token: jwtToken });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+
 app.post('/api/user/stats', (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -797,8 +834,31 @@ app.post('/api/user/stats', (req, res) => {
   }
 });
 
-// Admin APIs (/admin support)
-app.get('/api/admin/overview', (req, res) => {
+// Admin Auth Middleware (JWT based)
+const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-for-admin-auth';
+
+function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : (req.query.token as string);
+  
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'Authentication required' });
+  }
+  
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    if (decoded.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Admin access required' });
+    }
+    (req as any).user = decoded;
+    next();
+  } catch (err) {
+    return res.status(401).json({ success: false, message: 'Invalid or expired token' });
+  }
+}
+
+// Admin APIs (/admin support) - Protected
+app.get('/api/admin/overview', requireAdmin, (req, res) => {
   try {
     const activePeersList = Array.from(peers.values()).map(p => ({
       id: p.id,
@@ -839,7 +899,7 @@ app.get('/api/admin/overview', (req, res) => {
   }
 });
 
-app.get('/api/admin/users', (req, res) => {
+app.get('/api/admin/users', requireAdmin, (req, res) => {
   try {
     const users = sqliteAuth.getAllUsers();
     res.json({ success: true, users });
@@ -848,7 +908,7 @@ app.get('/api/admin/users', (req, res) => {
   }
 });
 
-app.post('/api/admin/users', (req, res) => {
+app.post('/api/admin/users', requireAdmin, (req, res) => {
   try {
     const { name, email, password, role, plan } = req.body;
     const result = sqliteAuth.registerUser(name, email, password, role || 'user', plan || 'free');
@@ -858,7 +918,7 @@ app.post('/api/admin/users', (req, res) => {
   }
 });
 
-app.delete('/api/admin/users/:id', (req, res) => {
+app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   try {
     const { id } = req.params;
     sqliteAuth.deleteUser(id);
@@ -868,7 +928,7 @@ app.delete('/api/admin/users/:id', (req, res) => {
   }
 });
 
-app.get('/api/admin/seed-sql', (req, res) => {
+app.get('/api/admin/seed-sql', requireAdmin, (req, res) => {
   try {
     const sqlPath = path.resolve(process.cwd(), 'docs/admin_and_test_users.sql');
     if (fs.existsSync(sqlPath)) {

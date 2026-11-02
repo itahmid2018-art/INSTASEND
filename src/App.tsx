@@ -482,6 +482,15 @@ export default function App() {
       }
     });
 
+    // Derive and set encryption key if secret is provided in URL fragment
+    const hash = window.location.hash.substring(1);
+    if (hash) {
+      import('./services/crypto').then(async ({ deriveKey }) => {
+        const key = await deriveKey(hash);
+        manager.setEncryptionKey(key);
+      });
+    }
+
     webrtcRef.current = manager;
 
     return () => {

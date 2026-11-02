@@ -82,8 +82,32 @@ export class WebRTCManager {
   private lastIceConnected = false;
   private onlineHandler: (() => void) | null = null;
   private offlineHandler: (() => void) | null = null;
+  private encryptionKey: CryptoKey | null = null;
 
-  // Connection Diagnostics Engine (30-second window, ICE monitoring, signal latency)
+  // ... (diagnostic engine code)
+
+  public async setEncryptionKey(key: CryptoKey) {
+    this.encryptionKey = key;
+  }
+
+
+  // Helper to send data (with encryption)
+  private async sendData(data: string | ArrayBuffer) {
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
+    
+    let toSend = data;
+    if (this.encryptionKey && toSend instanceof ArrayBuffer) {
+      try {
+        const { encryptFile } = await import('./crypto');
+        toSend = await encryptFile(toSend, this.encryptionKey);
+      } catch (e) {
+        console.error('Encryption failed:', e);
+        return;
+      }
+    }
+    this.dataChannel.send(toSend as any);
+  }
+
   private diagnosticSessionId = '';
   private diagnosticStartedAt = 0;
   private diagnosticWindowDurationMs = 30000; // 30 seconds initial diagnostic window
@@ -1103,8 +1127,18 @@ export class WebRTCManager {
       console.error('DataChannel error:', err);
     };
 
-    this.dataChannel.onmessage = (event) => {
-      this.handleDataChannelMessage(event.data);
+    this.dataChannel.onmessage = async (event) => {
+      let data = event.data;
+      if (this.encryptionKey && data instanceof ArrayBuffer) {
+        try {
+          const { decryptFile } = await import('./crypto');
+          data = await decryptFile(data, this.encryptionKey);
+        } catch (e) {
+          console.error('Decryption failed:', e);
+          return;
+        }
+      }
+      this.handleDataChannelMessage(data);
     };
   }
 
@@ -1123,7 +1157,7 @@ export class WebRTCManager {
       }))
     };
 
-    this.dataChannel.send(JSON.stringify(payload));
+    this.sendData(JSON.stringify(payload));
   }
 
   // Handle incoming messages over WebRTC DataChannel
@@ -1353,7 +1387,7 @@ export class WebRTCManager {
       }
 
       // Signal start of this file
-      this.dataChannel.send(JSON.stringify({
+      this.sendData(JSON.stringify({
         action: 'START_FILE_TRANSFER',
         fileId: fileItem.id,
         name: fileItem.name,
@@ -1393,7 +1427,7 @@ export class WebRTCManager {
           packet.set(new Uint8Array(chunkBuffer), 36);
         }
 
-        this.dataChannel.send((packet.buffer as unknown) as ArrayBuffer);
+        this.sendData((packet.buffer as unknown) as ArrayBuffer);
 
         offset += chunkByteLength;
         fileItem.bytesTransferred = offset;
@@ -1411,7 +1445,7 @@ export class WebRTCManager {
       fileItem.progress = 100;
 
       // Signal end of this file
-      this.dataChannel.send(JSON.stringify({
+      this.sendData(JSON.stringify({
         action: 'END_FILE_TRANSFER',
         fileId: fileItem.id,
         isCompressed,
@@ -1542,7 +1576,7 @@ export class WebRTCManager {
       timestamp: now
     };
 
-    this.dataChannel.send(JSON.stringify({
+    this.sendData(JSON.stringify({
       action: 'CHAT_MESSAGE',
       ...chatMsg
     }));
@@ -1555,7 +1589,7 @@ export class WebRTCManager {
     this.isCancelled = true;
     this.isTransferring = false;
     if (this.dataChannel && this.dataChannel.readyState === 'open') {
-      this.dataChannel.send(JSON.stringify({ action: 'CANCEL_TRANSFER' }));
+      this.sendData(JSON.stringify({ action: 'CANCEL_TRANSFER' }));
     }
     this.events.onStateChange?.('idle');
   }
