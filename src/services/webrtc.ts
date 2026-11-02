@@ -1124,7 +1124,7 @@ export class WebRTCManager {
     };
 
     this.dataChannel.onerror = (err) => {
-      console.error('DataChannel error:', err);
+      if (!import.meta.env.PROD) console.error('DataChannel error:', err);
     };
 
     this.dataChannel.onmessage = async (event) => {
