@@ -2,13 +2,14 @@ import { DatabaseSync } from 'node:sqlite';
 import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DATA_DIR = path.resolve(__dirname, '../data');
-const DB_PATH = path.resolve(DATA_DIR, 'instasend.db');
+const DATA_DIR = process.env.DATA_DIR || process.env.SQLITE_DIR || path.resolve(os.tmpdir(), 'instasend_data');
+const DB_PATH = process.env.SQLITE_PATH || process.env.DB_PATH || path.resolve(DATA_DIR, 'instasend.db');
 
 export interface UserRow {
   id: string;
