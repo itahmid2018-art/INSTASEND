@@ -48,7 +48,7 @@ InstaSend operates as a full-stack Node.js server where Express handles HTTP RES
 ```
 
 ### 2.1 SQLite WAL Journal Mode & Persistence
-The database file is stored at `data/instasend.db` with Write-Ahead Logging (`PRAGMA journal_mode = WAL;`) enabled for high-concurrency read and write throughput.
+The database file is stored at `data/instasend.db` in production (or customizable via `DATA_DIR` / `SQLITE_PATH` environment variables, defaulting to `os.tmpdir()/instasend_data` during local development to prevent `tsx watch` file watcher restart loops). Write-Ahead Logging (`PRAGMA journal_mode = WAL;`) is enabled for high-concurrency read and write throughput.
 
 ### 2.2 Secure Credentials & Password Hashing
 User passwords are never stored in plaintext. They are encrypted using Node's cryptographic `scrypt` key derivation function:
