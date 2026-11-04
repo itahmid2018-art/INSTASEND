@@ -49,6 +49,7 @@ import { isCompressibleTextFile } from '../services/compression.ts';
 import { SpeedChart } from './SpeedChart.tsx';
 import { SpeedGauge } from './SpeedGauge.tsx';
 import { buildShareUrl, fetchNetworkInfo } from '../services/network.ts';
+import JSZip from 'jszip';
 
 interface SendTabProps {
   webrtc: WebRTCManager | null;
@@ -97,6 +98,9 @@ export const SendTab: React.FC<SendTabProps> = ({
   const [isScanningFolders, setIsScanningFolders] = useState(false);
   const [isQRModalOpen, setIsQRModalOpen] = useState(false);
   const [compressTextFiles, setCompressTextFiles] = useState(true);
+  const [autoZipMultipleFiles, setAutoZipMultipleFiles] = useState(true);
+  const [isZippingFiles, setIsZippingFiles] = useState(false);
+  const [zippingProgressText, setZippingProgressText] = useState('');
   const [lanIp, setLanIp] = useState<string>('');
 
   // Access & Expiration Settings: Secret Code and Session Expiration
@@ -266,7 +270,7 @@ export const SendTab: React.FC<SendTabProps> = ({
     return <FileText className="w-5 h-5 text-[#5f6368]" />;
   };
 
-  const handleCreateCode = () => {
+  const handleCreateCode = async () => {
     const options = {
       secretCode: requiresSecretCode ? secretCode.trim() : undefined,
       requiresSecretCode,
@@ -291,8 +295,50 @@ export const SendTab: React.FC<SendTabProps> = ({
       webrtc?.createRoom([item], undefined, options);
     } else {
       if (stagedFiles.length === 0) return;
-      onFilesStaged?.(stagedFiles);
-      webrtc?.createRoom(stagedFiles, undefined, options);
+
+      let filesToTransfer = stagedFiles;
+
+      if (stagedFiles.length > 1 && autoZipMultipleFiles) {
+        setIsZippingFiles(true);
+        setZippingProgressText('Packaging files into archive (.zip)...');
+        try {
+          const zip = new JSZip();
+          for (const f of stagedFiles) {
+            zip.file(f.relativePath || f.name, f.file);
+          }
+          const zipBlob = await zip.generateAsync({
+            type: 'blob',
+            compression: 'DEFLATE',
+            compressionOptions: { level: 6 }
+          }, (metadata) => {
+            setZippingProgressText(`Zipping archive: ${Math.round(metadata.percent)}%`);
+          });
+
+          const zipName = `InstaSend_Archive_${new Date().toISOString().slice(0, 10)}.zip`;
+          const zipFile = new File([zipBlob], zipName, { type: 'application/zip' });
+          const zippedItem: FileItem = {
+            id: Math.random().toString(36).substring(2, 11),
+            name: zipName,
+            size: zipBlob.size,
+            type: 'application/zip',
+            file: zipFile,
+            progress: 0,
+            bytesTransferred: 0,
+            status: 'pending'
+          };
+          filesToTransfer = [zippedItem];
+          setStagedFiles([zippedItem]);
+          onFilesStaged?.([zippedItem]);
+        } catch (err) {
+          console.error('Error generating ZIP archive:', err);
+        } finally {
+          setIsZippingFiles(false);
+          setZippingProgressText('');
+        }
+      }
+
+      onFilesStaged?.(filesToTransfer);
+      webrtc?.createRoom(filesToTransfer, undefined, options);
     }
     sound.playConnect();
   };
@@ -718,6 +764,32 @@ export const SendTab: React.FC<SendTabProps> = ({
                   </span>
                 </div>
 
+                {/* Auto-Zip Multiple Files Toggle */}
+                {stagedFiles.length > 1 && (
+                  <div className="p-3.5 rounded-xl bg-white border border-[#dadce0] hover:border-[#1a73e8] transition-colors flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      id="auto-zip-files"
+                      checked={autoZipMultipleFiles}
+                      onChange={(e) => setAutoZipMultipleFiles(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 rounded border-[#dadce0] text-[#1a73e8] focus:ring-0 cursor-pointer"
+                    />
+                    <label htmlFor="auto-zip-files" className="flex-1 cursor-pointer select-none">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-semibold text-[#202124]">
+                          Automatically zip multiple files into a single archive
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-[#1a73e8] border border-blue-200">
+                          JSZip Archive
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#5f6368] mt-0.5">
+                        Bundles all staged files into a single compressed .zip archive before transfer to reduce overhead and improve multi-file transfer management.
+                      </p>
+                    </label>
+                  </div>
+                )}
+
                 {/* File Compression Setting Checkbox */}
                 <div className="p-3.5 rounded-xl bg-white border border-[#dadce0] hover:border-[#1a73e8] transition-colors flex items-start gap-3">
                   <input
@@ -912,10 +984,20 @@ export const SendTab: React.FC<SendTabProps> = ({
                 <div className="flex flex-col gap-2">
                   <button
                     onClick={handleCreateCode}
-                    className="w-full py-3.5 px-6 rounded-full bg-[#1a73e8] hover:bg-[#1557b0] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                    disabled={isZippingFiles}
+                    className="w-full py-3.5 px-6 rounded-full bg-[#1a73e8] hover:bg-[#1557b0] disabled:opacity-75 disabled:cursor-wait text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
                   >
-                    <span>Initiate WebRTC Transfer ({stagedFiles.length} Queued {stagedFiles.length === 1 ? 'File' : 'Files'} • {formatBytes(totalSize)})</span>
-                    <ArrowRight className="w-4 h-4" />
+                    {isZippingFiles ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>{zippingProgressText || 'Zipping files...'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Initiate WebRTC Transfer ({stagedFiles.length} Queued {stagedFiles.length === 1 ? 'File' : 'Files'} • {formatBytes(totalSize)})</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
                   </button>
 
                   <div className="flex items-center justify-center gap-1.5 text-[11px] text-[#5f6368] py-0.5">

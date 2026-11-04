@@ -187,8 +187,15 @@ export const ReceiveTab: React.FC<ReceiveTabProps> = ({
     const clean = code.replace(/[^A-Za-z0-9]/g, '').trim().toUpperCase();
     if (clean.length < 4) return;
     fetch(`/api/room/${clean}`)
-      .then(res => res.json())
+      .then(async res => {
+        const ct = res.headers.get('content-type') || '';
+        if (!res.ok || !ct.includes('application/json')) {
+          return null;
+        }
+        return res.json();
+      })
       .then(data => {
+        if (!data) return;
         if (data.exists) {
           const val: RoomValidityInfo = {
             code: clean,

@@ -10,6 +10,9 @@ export default defineConfig(() => {
     },
     esbuild: {
       target: 'esnext',
+      supported: {
+        destructuring: true,
+      },
     },
     plugins: [
       react(),

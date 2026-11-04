@@ -42,7 +42,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   React.useEffect(() => {
     if (isOpen) {
       fetch('/api/db/status')
-        .then(r => r.json())
+        .then(async r => {
+          const ct = r.headers.get('content-type') || '';
+          if (!r.ok || !ct.includes('application/json')) return null;
+          return r.json();
+        })
         .then(data => {
           if (data?.sqlite) setDbStatus(data.sqlite);
         })

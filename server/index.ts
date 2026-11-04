@@ -1105,6 +1105,9 @@ export async function startServer() {
 
       app.use('*', async (req, res, next) => {
         const url = req.originalUrl;
+        if (url.startsWith('/api') || url.startsWith('/ws')) {
+          return next();
+        }
         try {
           let template = fs.readFileSync(path.resolve(projectRoot, 'index.html'), 'utf-8');
           template = await vite.transformIndexHtml(url, template);
@@ -1140,6 +1143,15 @@ export async function startServer() {
       res.status(404).send('Static assets not found. Please run "npm run build" first.');
     });
   }
+
+  // Explicit JSON 404 handler: ensure /api/* calls never return HTML 404 pages
+  app.all('/api/*', (req, res) => {
+    res.status(404).json({
+      success: false,
+      error: 'API endpoint not found',
+      path: req.originalUrl
+    });
+  });
 
   server.on('error', (err: any) => {
     if (err.code === 'EADDRINUSE') {
