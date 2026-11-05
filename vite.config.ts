@@ -62,6 +62,12 @@ export default defineConfig(() => {
       })
     ],
     optimizeDeps: {
+      esbuildOptions: {
+        target: 'esnext',
+        supported: {
+          destructuring: true,
+        },
+      },
       exclude: ['virtual:pwa-register', 'virtual:pwa-register/react'],
     },
     resolve: {
