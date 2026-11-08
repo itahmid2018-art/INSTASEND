@@ -50,6 +50,13 @@ Welcome to the **InstaSend** Documentation Hub. This directory contains detailed
   - Schema definitions for `users`, `managed_files`, and `transfer_history` tables
   - Pre-computed `scrypt` password hashes and salts for admin and demo accounts
 
+### 6. 📜 [Prompt History, Errors & Issue Log Dump (`PromptsAndIssueLogDump.md`)](./PromptsAndIssueLogDump.md)
+* **Audience**: Developers, DevOps, Auditors, Project Stakeholders
+* **Topics Covered**:
+  - Chronological log of all prompts, development milestones, and timestamps from inception to current date
+  - In-depth technical breakdown of all errors encountered (esbuild transpile errors, `tsx watch` restart loops, Vite `optimizeDeps` pre-bundler overrides, JSON/HTML MIME parsing errors)
+  - Complete issue and resolution matrix with 100% test verification status
+
 ---
 
 ## 🚀 Quick Reference Commands
