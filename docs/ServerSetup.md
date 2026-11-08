@@ -228,6 +228,21 @@ server {
 
 ---
 
+## 8. Multi-Cloud & Enterprise Hosting (GCP, AWS, Azure, Vercel, VPS)
+
+For comprehensive, step-by-step production guides on deploying InstaSend to:
+* **Google Cloud Platform** (Cloud Run container with Session Affinity, GCE Ubuntu VM)
+* **Amazon Web Services** (AWS App Runner, EC2, Lightsail $3.50 VPS, ECS/Fargate + ALB)
+* **Microsoft Azure** (Azure Container Apps, Linux App Service, Azure VMs)
+* **Vercel** (Decoupled Hybrid Architecture: Vercel CDN Frontend + Container Backend)
+* **Generic Linux VPS** (DigitalOcean, Hetzner, Linode, OVH, Vultr)
+* **Docker & Docker Compose** 1-command deployment (`docker compose up -d`)
+
+Please consult the dedicated guide:
+👉 **[docs/CloudAndVpsDeploymentGuide.md](./CloudAndVpsDeploymentGuide.md)**
+
+---
+
 ## 9. Native Android Mobile & Android TV Compilation
 
 InstaSend supports cross-platform native compilation for **Android Mobile (Phones & Tablets)** and **Android TV / Google TV** using Capacitor.

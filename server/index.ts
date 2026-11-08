@@ -14,8 +14,8 @@ const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
 
 const isProduction = process.env.NODE_ENV === 'production';
-export const PORT = 3000;
-export const BIND_HOST = '0.0.0.0';
+export const PORT = Number(process.env.PORT) || 3000;
+export const BIND_HOST = process.env.BIND_HOST || '0.0.0.0';
 
 export const app = express();
 export const server = http.createServer(app);

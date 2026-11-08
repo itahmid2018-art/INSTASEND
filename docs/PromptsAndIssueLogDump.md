@@ -254,6 +254,29 @@ Each log entry includes:
 
 ---
 
+### Prompt 11
+* **Date & Timestamp:** 2026-11-08 16:51:04 UTC
+* **User Request:**
+  > "Please create a new document to help install the app on GCP, AWS, Azure, Vercel or on any VPS that includes all the dependencies, update the setup files if required if they can ease out the process of deployment and update other relevant documents that are dependent on this update."
+* **Milestone / Action Taken:**
+  1. **New Deployment Master Document (`docs/CloudAndVpsDeploymentGuide.md`):**
+     - Authored exhaustive, step-by-step production deployment manual covering Google Cloud Platform (Cloud Run with `--session-affinity` & Compute Engine GCE), Amazon Web Services (App Runner, EC2, Lightsail $3.50 VPS, ECS/Fargate + ALB with sticky sessions), Microsoft Azure (Container Apps & Linux App Service with WebSockets enabled), Vercel (detailed architecture analysis explaining why pure serverless edge cannot maintain persistent WebSockets, and providing the decoupled hybrid architecture: Vercel static CDN frontend + containerized signaling backend), and Generic Linux VPS (DigitalOcean, Hetzner, Linode, OVH, Vultr) with PM2, Systemd, Nginx SSL, and Caddy.
+     - Documented `node:sqlite` WAL persistence, zero-downtime hot backup crons, environment variables reference, and enterprise Coturn STUN/TURN server installation.
+  2. **Production Containerization Assets:**
+     - Created multi-stage `Dockerfile` (Node 22 Alpine, build & runner stages, health checks).
+     - Created `.dockerignore` for clean build contexts.
+     - Created `docker-compose.yml` for 1-command containerized deployment with volume persistence.
+  3. **Setup Script Enhancements (`setup.sh` & `setup.bat`):**
+     - Added automated `.env` initialization from `.env.example` if `.env` does not exist.
+     - Added CLI flag support: `--skip-tests` (for rapid CI/CD container builds), `--start` / `--deploy` (immediate production server start), `--dev`, and `--docker`.
+     - Validated Node.js v22+ and `node:sqlite` database initialization pre-flights.
+  4. **Server Cloud Port Compatibility (`server/index.ts`):**
+     - Updated port binding to dynamically respect `PORT = Number(process.env.PORT) || 3000`, enabling seamless deployment on Cloud Run, AWS App Runner, Azure Container Apps, and Heroku.
+  5. **Cross-Referenced Documentation:**
+     - Updated `docs/README.md`, root `README.md`, and `docs/ServerSetup.md` with links and reference commands.
+
+---
+
 ## 3. Comprehensive Error & Issue Matrix
 
 | # | Issue / Error Message | Component | Root Cause | Permanent Resolution |
@@ -264,6 +287,7 @@ Each log entry includes:
 | **4** | `Transforming destructuring to configured target ("chrome87"...)` in `d3-scale` & `fast-equals` | `vite.config.ts`, `node_modules` | Vite's dependency optimizer (`optimizeDeps`) runs an independent esbuild instance defaulting to `ESBUILD_MODULES_TARGET`. | Configured `optimizeDeps.esbuildOptions.target = 'esnext'` and `supported: { destructuring: true }` in `vite.config.ts`. |
 | **5** | Missing SQLite3 dependency checks in local setup scripts | `setup.bat`, `setup.sh` | Setup scripts did not validate that Node.js supported native `node:sqlite` or test table initialization. | Added dedicated `[3/7]` Node.js SQLite validation and `[5/7]` database schema & seed testing. |
 | **6** | `Failed to fetch network info: SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON` | `src/services/network.ts`, `server/index.ts` | Client fetched `/api/network-info` and called `.json()` on HTML responses returned by proxy/server fallbacks; Express lacked JSON 404 handler for `/api/*`. | Added content-type checks & client fallback in `network.ts`; added explicit `app.all('/api/*', ...)` JSON 404 handler in `server/index.ts`. |
+| **7** | Hardcoded Port 3000 in cloud serverless container environments | `server/index.ts` | Cloud Run, AWS App Runner, and Azure pass dynamic `$PORT` environment variable. | Updated to `PORT = Number(process.env.PORT) || 3000`. |
 
 ---
 
@@ -278,3 +302,4 @@ Each log entry includes:
   - `scripts/test-auto-reconnect.mjs`: **11 / 11 Passed**
   - `scripts/test-secret-code-and-expiry.mjs`: **7 / 7 Passed**
   - **Total:** **41 / 41 Automated Tests Passing (100%)**
+

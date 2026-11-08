@@ -3,13 +3,28 @@ SETLOCAL EnableDelayedExpansion
 
 TITLE InstaSend Local Setup & Deployment Script (Windows)
 
+set SKIP_TESTS=false
+set AUTO_START=false
+set AUTO_DEV=false
+
+:parse_args
+if "%~1"=="" goto continue_setup
+if /I "%~1"=="--skip-tests" set SKIP_TESTS=true
+if /I "%~1"=="/skip-tests" set SKIP_TESTS=true
+if /I "%~1"=="--start" set AUTO_START=true
+if /I "%~1"=="--deploy" set AUTO_START=true
+if /I "%~1"=="--dev" set AUTO_DEV=true
+shift
+goto parse_args
+
+:continue_setup
 echo ======================================================
-echo   InstaSend ⚡ Local Setup, Test & Deployment (Windows)
+echo   InstaSend ⚡ Setup & Deployment Pipeline (Windows)
 echo ======================================================
 echo.
 
 :: 1. Check Node.js
-echo [1/7] Checking Node.js availability...
+echo [1/8] Checking Node.js availability...
 WHERE node >nul 2>nul
 IF %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Node.js is not installed or not in PATH.
@@ -21,7 +36,7 @@ FOR /F "tokens=*" %%i IN ('node -v') DO SET NODE_VERSION=%%i
 echo   - Found Node.js version: %NODE_VERSION%
 
 :: 2. Check npm
-echo [2/7] Checking npm availability...
+echo [2/8] Checking npm availability...
 WHERE npm >nul 2>nul
 IF %ERRORLEVEL% NEQ 0 (
     echo [ERROR] npm is not installed or not in PATH.
@@ -32,7 +47,7 @@ FOR /F "tokens=*" %%i IN ('npm -v') DO SET NPM_VERSION=%%i
 echo   - Found npm version: %NPM_VERSION%
 
 :: 3. Check SQLite3 / Node native sqlite support
-echo [3/7] Verifying SQLite3 database support (node:sqlite)...
+echo [3/8] Verifying SQLite3 database support (node:sqlite)...
 node -e "try { const { DatabaseSync } = require('node:sqlite'); console.log('   - Node native SQLite DatabaseSync engine confirmed available.'); } catch(e) { console.error('   - [ERROR] node:sqlite not available. Please ensure Node.js v22.5+ is installed.'); process.exit(1); }"
 IF %ERRORLEVEL% NEQ 0 (
     echo [ERROR] SQLite3 native database check failed.
@@ -40,8 +55,23 @@ IF %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
-:: 4. Install npm dependencies
-echo [4/7] Installing project dependencies (npm install)...
+:: 4. Verify environment configuration
+echo [4/8] Verifying environment configuration...
+IF NOT EXIST .env (
+    IF EXIST .env.example (
+        echo   - Creating .env from .env.example...
+        copy .env.example .env >nul
+    ) ELSE (
+        echo NODE_ENV=production>.env
+        echo PORT=3000>>.env
+    )
+    echo   - Environment file initialized (.env).
+) ELSE (
+    echo   - Existing .env file found.
+)
+
+:: 5. Install npm dependencies
+echo [5/8] Installing project dependencies (npm install)...
 call npm install
 IF %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Dependency installation failed.
@@ -50,8 +80,8 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 echo   - Dependencies installed successfully.
 
-:: 5. Initialize & Verify SQLite Database Tables & Seeds
-echo [5/7] Initializing & testing SQLite database tables and seed accounts...
+:: 6. Initialize & Verify SQLite Database Tables & Seeds
+echo [6/8] Initializing & testing SQLite database tables and seed accounts...
 call npx tsx -e "import('./server/db.ts').then(() => console.log('   - SQLite database initialized and pre-seeded successfully.'))"
 IF %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Database initialization failed.
@@ -59,17 +89,21 @@ IF %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
-:: 6. Run automated test suite
-echo [6/7] Running automated test suite (npm test)...
-call npm test
-IF %ERRORLEVEL% NEQ 0 (
-    echo [WARNING] Some tests reported issues, but proceeding with build...
+:: 7. Run automated test suite
+IF "%SKIP_TESTS%"=="true" (
+    echo [7/8] Skipping automated test suite (--skip-tests specified).
 ) ELSE (
-    echo   - All test suites passed successfully!
+    echo [7/8] Running automated test suite (npm test)...
+    call npm test
+    IF %ERRORLEVEL% NEQ 0 (
+        echo [WARNING] Some tests reported issues, but proceeding with build...
+    ) ELSE (
+        echo   - All test suites passed successfully!
+    )
 )
 
-:: 7. Build production bundle
-echo [7/7] Building production bundle (npm run build)...
+:: 8. Build production bundle
+echo [8/8] Building production bundle (npm run build)...
 call npm run build
 IF %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Production build failed.
@@ -83,10 +117,22 @@ echo ======================================================
 echo   SETUP & BUILD COMPLETED SUCCESSFULLY! 🎉
 echo ======================================================
 echo.
-echo To start development server:
-echo   npm run dev
+echo Deployment Options:
+echo   1. Start Production Server: npm run start
+echo   2. Start Development Server: npm run dev
 echo.
-echo To start production server:
-echo   npm run start
-echo.
+
+IF "%AUTO_START%"=="true" (
+    echo Starting production server now...
+    npm run start
+    goto end
+)
+IF "%AUTO_DEV%"=="true" (
+    echo Starting development server now...
+    npm run dev
+    goto end
+)
+
 PAUSE
+
+:end

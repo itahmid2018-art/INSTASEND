@@ -1,0 +1,15 @@
+node_modules
+dist
+data
+.git
+.gitignore
+.npmrc
+.env
+*.log
+npm-debug.log*
+.DS_Store
+coverage
+android
+ios
+docs/assets
+.aistudio

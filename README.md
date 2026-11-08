@@ -96,12 +96,27 @@ InstaSend is built from the ground up to strictly comply with the **General Data
 ## 💻 Local Setup & Quick Start
 
 ### 1. Prerequisites
-* **Node.js**: v18.0.0 or higher
+* **Node.js**: v22.5.0 or higher (required for native `node:sqlite` engine)
 * **npm**: v9.0.0 or higher
 
-### 2. Installation
-Clone the repository and install all required dependencies:
+### 2. Automated 1-Command Setup
+Run the automated multi-step setup pipeline:
 
+```bash
+# Linux / macOS / Cloud VPS:
+./setup.sh --start
+
+# Windows:
+setup.bat --start
+```
+
+### 3. Docker Container Quickstart
+```bash
+# Build and run with persistent SQLite volume:
+docker compose up -d --build
+```
+
+### 4. Manual Installation & Development
 ```bash
 # Clone the repository
 git clone https://github.com/your-username/instasend.git
@@ -109,27 +124,41 @@ cd instasend
 
 # Install dependencies
 npm install
-```
 
-### 3. Start Development Server
-Run the unified full-stack server (serves the Express API, WebSocket signaling server, and Vite dev server):
-
-```bash
+# Start development server (port 3000)
 npm run dev
+
+# Run automated test suite
+npm test
+
+# Build and start production bundle
+npm run build && npm run start
 ```
 
 The application will start on **http://localhost:3000** (or `http://0.0.0.0:3000`).
 
-### 4. Build for Production
-To bundle the frontend with Vite and transpile the backend server with esbuild:
+---
 
-```bash
-# Run production build
-npm run build
+## ☁️ Multi-Cloud & VPS Deployment
 
-# Start production server
-npm run start
-```
+Detailed production deployment guides are available in [docs/CloudAndVpsDeploymentGuide.md](./docs/CloudAndVpsDeploymentGuide.md):
+
+* **Google Cloud Platform (GCP)**: Cloud Run serverless container (`--session-affinity`) & Compute Engine VM.
+* **Amazon Web Services (AWS)**: AWS App Runner, EC2 (Ubuntu 24.04), Lightsail ($3.50/mo VPS), and ECS/Fargate + ALB.
+* **Microsoft Azure**: Azure Container Apps with session stickiness & Linux App Service.
+* **Vercel**: Decoupled hybrid architecture (Vercel Edge CDN for frontend + containerized signaling backend).
+* **Generic Linux VPS**: DigitalOcean, Hetzner, Linode, OVH, Vultr with PM2, Systemd, Nginx, or Caddy reverse proxy.
+
+---
+
+## 📄 Documentation Hub
+* 📋 [Deployment Guidelines & Testing SOP (Dependencies, Admin & User Testing)](./docs/DeploymentAndTestingSOP.md)
+* ☁️ [Multi-Cloud & VPS Deployment Master Guide](./docs/CloudAndVpsDeploymentGuide.md)
+* 🖥️ [Production Server & Database Setup Guide](./docs/ServerSetup.md)
+* 🛡️ [Security Architecture, Testing & Verification Guide](./docs/SecurityTestingAndVerification.md)
+* 🧪 [Features & QA Verification Guide](./docs/FeaturesAndQAVerification.md)
+* 📱 [Android Mobile & Android TV Build Guide](./docs/AndroidBuildGuide.md)
+* 📜 [Prompt History & Issue Log Dump](./docs/PromptsAndIssueLogDump.md)
 
 ---
 
